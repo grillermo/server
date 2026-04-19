@@ -1,0 +1,35 @@
+###############################################################################
+## Monit Control File
+###############################################################################
+
+# 1. Global Settings
+set daemon 30                # Poll process status every 30 seconds
+set logfile /tmp/monit.log   # Log location
+set pidfile /tmp/monit.pid   # Monit's own PID file
+
+# 2. Web Interface (Requirement: Web UI + Basic Auth)
+# Access this at http://localhost:2812
+set httpd port 2812
+    use address monit.chiq.me    # For security, only allow local access by default
+    allow admin:monit        # Change "monit" to your desired password (Basic Auth)
+
+# 3. Process Monitoring Template (Requirement: Alias + Health Check)
+# The name "my-api-alias" serves as your alias in the CLI and Web UI
+check process my-api-alias with pidfile /tmp/my-app.pid
+    
+    # Requirement: See/Set the directory where the process is launched
+    # We use 'cd' inside a bash wrapper to ensure the process starts in the right folder
+    start program = "/bin/bash -c 'cd /Users/yourname/projects/my-app && ./start_script.sh'"
+    stop program  = "/usr/bin/killall my-app-binary"
+
+    # Requirement: Health Checks for Web Processes
+    # Restarts the process if the /health endpoint doesn't return HTTP 200
+    if failed host 127.0.0.1 port 8080 protocol http request "/health" then restart
+    
+    # Optional: Safety belt to prevent infinite restart loops
+    if 5 restarts within 5 cycles then timeout
+
+# 4. System Monitoring (Optional but recommended)
+check system $HOST
+    if loadavg (5min) > 3 then alert
+    if memory usage > 80% for 4 cycles then alert

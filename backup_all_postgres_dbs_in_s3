@@ -1,0 +1,4 @@
+cd /Users/grillermo/c/server
+pg_dumpall -U grillermo > alldbs_backup.sql
+tar -czvf alldbs_backup.tar.gz alldbs_backup.sql
+aws s3 cp alldbs_backup.tar.gz s3://guillermo-public/mac-mini-postgres-databases/
