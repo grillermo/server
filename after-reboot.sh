@@ -15,7 +15,6 @@ SERVICES=(
     "serve-html-markdown"
     "ebooks"
     "read-it-soon"
-    "grillermo_com"
     "blog_grillermo_com"
     "file_to_s3"
 )
@@ -24,12 +23,6 @@ SERVICES=(
 setup_tmux_session() {
     local session_name=$1
     local dir_name=$session_name
-    
-    # Handle the exceptions where the folder name doesn't match the session name
-    case $session_name in
-        "auto-email-classifier") dir_name="auto-email-classifier/rules_editor" ;;
-        "ebooks") dir_name="calibreshare" ;;
-    esac
     
     local full_path="$BASE_DIR/$dir_name"
 
@@ -41,7 +34,7 @@ setup_tmux_session() {
     # --- PANE 1: The Log Tail (Left Side) ---
     tmux send-keys -t "$session_name" "cd $full_path" C-m
     # Touch the log file just in case Monit hasn't created it yet
-    tmux send-keys -t "$session_name" "touch output.log && tail -f output.log" C-m
+    tmux send-keys -t "$session_name" "./serve" C-m
     
     # --- PANE 2: The Code Editor (Right Side) ---
     tmux split-window -h -t "$session_name"

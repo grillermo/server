@@ -1,0 +1,29 @@
+:80 {
+    root * /Users/grillermo/c/grillermo_com
+    file_server
+}
+
+:3000 {
+    # 1. Serve static assets 
+    handle /Users/grillermo/c/auto-email-classifier/public/assets/* {
+        file_server
+    }
+
+    # 2. Proxy everything else to your service on port 3000
+    handle {
+        reverse_proxy localhost:3001 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    log {
+        output file /Users/grillermo/c/auto-email-classifier/logs/caddy_access.log {
+            roll_size     100mb    # Rotate when a log reaches 100MB
+            roll_keep     10       # Keep a maximum of 10 log files
+            roll_keep_for 7d       # Keep logs for exactly 7 days
+        }
+    }
+}
