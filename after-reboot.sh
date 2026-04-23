@@ -14,7 +14,7 @@ SERVICES=(
     "labs"
     "serve-html-markdown"
     "ebooks"
-    "read-it-soon"
+    "readitsoon"
     "blog_grillermo_com"
     "file_to_s3"
 )
@@ -49,4 +49,3 @@ done
 echo "All tmux sessions created!"
 
 # Monit will monitor the services now because it is installed through
-# brew services restart monit
