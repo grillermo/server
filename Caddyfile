@@ -33,7 +33,8 @@
 # readitsoon
 :4000 {
     # 1. Serve static assets 
-    handle /Users/grillermo/c/readitsoon/public/* {
+    handle /public/* {
+        root * /Users/grillermo/c/readitsoon
         file_server
     }
 
