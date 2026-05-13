@@ -38,9 +38,20 @@
         file_server
     }
 
-    # 2. Proxy everything else to your service on port 4000
+    # 2. Proxy to blue (4001) or green (4003) — first healthy slot wins
     handle {
-        reverse_proxy localhost:4001 {
+        reverse_proxy localhost:4001 localhost:4003 {
+            lb_policy first
+            fail_duration 5s
+            lb_try_duration 8s
+
+            # active health checking
+            health_uri      /health
+            health_interval 10s
+            health_timeout  3s
+            health_status   200
+            health_body     `"ok":true`
+
             header_up Host {host}
             header_up X-Real-IP {remote_host}
             header_up X-Forwarded-For {remote_host}
