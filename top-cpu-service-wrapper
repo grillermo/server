@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+service="${1:?service name required}"
+root="${2:?service root required}"
+shift 2
+
+registry_dir="${TOP_CPU_SERVICE_REGISTRY:-$HOME/.local/share/top_cpu/services}"
+registry_file="$registry_dir/$service.env"
+
+mkdir -p "$registry_dir"
+
+export TOP_CPU_SERVICE="$service"
+export TOP_CPU_SERVICE_ROOT="$root"
+export TOP_CPU_SERVICE_TMUX="${TOP_CPU_SERVICE_TMUX:-$service}"
+if [ -n "${TOP_CPU_ROLE:-}" ]; then
+  export TOP_CPU_ROLE
+fi
+
+cat > "$registry_file" <<EOF
+service=$service
+root=$root
+tmux_session=$TOP_CPU_SERVICE_TMUX
+wrapper_pid=$$
+started_at=$(date -Iseconds)
+EOF
+
+cleanup() {
+  rm -f "$registry_file"
+}
+trap cleanup EXIT INT TERM
+
+cd "$root"
+exec "$@"
