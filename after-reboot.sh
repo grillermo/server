@@ -21,6 +21,7 @@ SERVICES=(
     "yosubee"
     "awh"
     "patatatube"
+    "top_cpu"
 )
 
 # Function to create and configure a tmux session
