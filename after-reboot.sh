@@ -22,6 +22,7 @@ SERVICES=(
     "awh"
     "patatatube"
     "top_cpu"
+    "comunidad-antesis"
 )
 
 # Function to create and configure a tmux session
