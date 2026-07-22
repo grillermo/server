@@ -114,11 +114,13 @@
 	# 1. Static assets (unauthenticated; URL path == disk path)
 	handle /assets/* {
 		header Cache-Control "public, max-age=3600"
+		log_append served_by caddy
 		file_server
 	}
 	@rooticons path /favicon.ico /apple-touch-icon.png /apple-splash.png /apple-splash-optimized.jpg
 	handle @rooticons {
 		header Cache-Control "public, max-age=3600"
+		log_append served_by caddy
 		file_server
 	}
 
@@ -149,6 +151,7 @@
 			}
 			@served path /data/hls/*
 			header @served Cache-Control "public, max-age=31536000, immutable"
+			log_append @served served_by caddy
 			file_server @served
 			reverse_proxy localhost:3051 {
 				header_up Host {host}
@@ -174,6 +177,7 @@
 			rewrite @mp4 /videos/{re.stream.1}.mp4
 			@served path /videos/*.mp4
 			header @served Cache-Control "public, max-age=31536000, immutable"
+			log_append @served served_by caddy
 			file_server @served
 			reverse_proxy localhost:3051 {
 				header_up Host {host}
