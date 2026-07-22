@@ -105,6 +105,104 @@
 	}
 }
 
+# patatatube — Caddy owns client-facing :3050, app runs on :3051.
+# Static assets, packaged HLS segments and downloaded MP4s come straight off
+# disk; API, SSR page, library streams and HLS packaging proxy to FastAPI.
+:3050 {
+	root * /Users/grillermo/c/patatatube
+
+	# 1. Static assets (unauthenticated; URL path == disk path)
+	handle /assets/* {
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+	@rooticons path /favicon.ico /apple-touch-icon.png /apple-splash.png /apple-splash-optimized.jpg
+	handle @rooticons {
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+
+	# 2. HLS assets: token check via forward_auth, then serve the packaged file
+	#    from data/hls/{id}/ if it exists; otherwise fall through to the app
+	#    (which triggers packaging on master.m3u8 and answers 409/404).
+	@hls path_regexp hls ^/videos/([0-9]+)/hls/(.+)$
+	handle @hls {
+		route {
+			forward_auth localhost:3051 {
+				uri /check-auth?{query}
+			}
+			@onDisk file {
+				try_files /data/hls/{re.hls.1}/{re.hls.2}
+			}
+			rewrite @onDisk /data/hls/{re.hls.1}/{re.hls.2}
+			# Go's mime table may not know these extensions; defer so the
+			# override lands after file_server sets its own Content-Type
+			@m3u8 path_regexp ^/data/hls/.+\.m3u8$
+			header @m3u8 {
+				Content-Type application/vnd.apple.mpegurl
+				defer
+			}
+			@m4s path_regexp ^/data/hls/.+\.m4s$
+			header @m4s {
+				Content-Type video/iso.segment
+				defer
+			}
+			@served path /data/hls/*
+			header @served Cache-Control "public, max-age=31536000, immutable"
+			file_server @served
+			reverse_proxy localhost:3051 {
+				header_up Host {host}
+				header_up X-Real-IP {remote_host}
+				header_up X-Forwarded-For {remote_host}
+				header_up X-Forwarded-Proto {scheme}
+			}
+		}
+	}
+
+	# 3. Downloaded/uploaded videos live at videos/{id}.mp4 — serve directly
+	#    with Caddy's native Range/ETag support. Library videos (arbitrary
+	#    source paths, version resolution) fall through to the app.
+	@stream path_regexp stream ^/videos/([0-9]+)/stream$
+	handle @stream {
+		route {
+			forward_auth localhost:3051 {
+				uri /check-auth?{query}
+			}
+			@mp4 file {
+				try_files /videos/{re.stream.1}.mp4
+			}
+			rewrite @mp4 /videos/{re.stream.1}.mp4
+			@served path /videos/*.mp4
+			header @served Cache-Control "public, max-age=31536000, immutable"
+			file_server @served
+			reverse_proxy localhost:3051 {
+				header_up Host {host}
+				header_up X-Real-IP {remote_host}
+				header_up X-Forwarded-For {remote_host}
+				header_up X-Forwarded-Proto {scheme}
+			}
+		}
+	}
+
+	# 4. Everything else → FastAPI
+	handle {
+		reverse_proxy localhost:3051 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	log {
+		output file /Users/grillermo/c/patatatube/log/caddy_access.log {
+			roll_size 100mb # Rotate when a log reaches 100MB
+			roll_keep 10 # Keep a maximum of 10 log files
+			roll_keep_for 7d # Keep logs for exactly 7 days
+		}
+	}
+}
+
 # comunidad-antesis
 :4020 {
 	handle /public/* {
@@ -112,7 +210,7 @@
 		file_server
 	}
 
-	# Proxy to blue (3201) and green (3202) — balance across both
+	# Proxy to blue (4021) and green (4022) — balance across both
 	handle {
 		reverse_proxy localhost:4021 localhost:4022 {
 			lb_policy round_robin
