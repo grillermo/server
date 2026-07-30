@@ -23,6 +23,7 @@ SERVICES=(
     "patatatube"
     "top_cpu"
     "comunidad-antesis"
+    "torlink"
 )
 
 # Function to create and configure a tmux session
