@@ -108,8 +108,21 @@
 # patatatube — Caddy owns client-facing :3050, app runs on :3051.
 # Static assets, packaged HLS segments and downloaded MP4s come straight off
 # disk; API, SSR page, library streams and HLS packaging proxy to FastAPI.
+#
+# The token check for disk-served files happens *here*, not via forward_auth:
+# every HLS segment used to cost a round trip to FastAPI /check-auth, so an
+# iOS "Download all" turned thousands of 5ms disk reads into thousands of
+# Python requests. UPLOAD_TOKEN reaches Caddy via `caddy run --envfile
+# /Users/grillermo/c/patatatube/.env` (see homebrew.mxcl.caddy.plist).
 :3050 {
 	root * /Users/grillermo/c/patatatube
+
+	# Same contract as the app's /check-auth: Bearer header, or ?token= for
+	# <video> tags, which cannot set headers.
+	@ptunauth {
+		not header Authorization "Bearer {env.UPLOAD_TOKEN}"
+		not query token={env.UPLOAD_TOKEN}
+	}
 
 	# 1. Static assets (unauthenticated; URL path == disk path)
 	handle /assets/* {
@@ -124,15 +137,16 @@
 		file_server
 	}
 
-	# 2. HLS assets: token check via forward_auth, then serve the packaged file
+	# 2. HLS assets: token check in-process, then serve the packaged file
 	#    from data/hls/{id}/ if it exists; otherwise fall through to the app
 	#    (which triggers packaging on master.m3u8 and answers 409/404).
 	@hls path_regexp hls ^/videos/([0-9]+)/hls/(.+)$
 	handle @hls {
+		# MEDIA_ROOT/data/hls, matching paths.HLS_DIR; falls back to reverse_proxy
+		# below when unset (root becomes the site root, so try_files just misses).
+		root * {env.MEDIA_ROOT}
 		route {
-			forward_auth localhost:3051 {
-				uri /check-auth?{query}
-			}
+			respond @ptunauth 401
 			@onDisk file {
 				try_files /data/hls/{re.hls.1}/{re.hls.2}
 			}
@@ -167,10 +181,10 @@
 	#    source paths, version resolution) fall through to the app.
 	@stream path_regexp stream ^/videos/([0-9]+)/stream$
 	handle @stream {
+		# MEDIA_ROOT/videos, matching paths.VIDEOS_DIR.
+		root * {env.MEDIA_ROOT}
 		route {
-			forward_auth localhost:3051 {
-				uri /check-auth?{query}
-			}
+			respond @ptunauth 401
 			@mp4 file {
 				try_files /videos/{re.stream.1}.mp4
 			}
