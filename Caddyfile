@@ -117,11 +117,15 @@
 :3050 {
 	root * /Users/grillermo/c/patatatube
 
-	# Same contract as the app's /check-auth: Bearer header, or ?token= for
-	# <video> tags, which cannot set headers.
+	# Same contract as the app's /check-auth: Bearer header for the iOS app,
+	# ?token= for anything that cannot set headers, or the web page's login
+	# cookie (set by POST /login). The cookie match is a substring test on the
+	# whole Cookie header, so it only holds while UPLOAD_TOKEN stays free of
+	# characters Starlette would quote — keep it [A-Za-z0-9._~-].
 	@ptunauth {
 		not header Authorization "Bearer {env.UPLOAD_TOKEN}"
 		not query token={env.UPLOAD_TOKEN}
+		not header Cookie *upload_token={env.UPLOAD_TOKEN}*
 	}
 
 	# 1. Static assets (unauthenticated; URL path == disk path)
