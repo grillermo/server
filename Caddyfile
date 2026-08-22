@@ -70,6 +70,15 @@
 
 # yosubee
 :3200 {
+	# 1. Define matcher for common scanner noise
+	@blocked {
+		path_regexp \.(php|aspx|asp|jsp|cgi)$
+		path /wp-admin* /wp-login.php /admin.php /config.php /xmlrpc.php
+	}
+
+	# 2. Drop the noise immediately with a 404
+	respond @blocked "Not Found" 404
+
 	handle /public/* {
 		root * /Users/grillermo/c/yosubee
 		file_server
