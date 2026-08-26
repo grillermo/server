@@ -2,6 +2,7 @@
 # description: Description comes here.... tmux script runs on startup.
 #
 rm /opt/homebrew/var/postgresql@18/postmaster.pid
+brew services start redis&
 
 # Base directory for all projects
 BASE_DIR="/Users/grillermo/c"
