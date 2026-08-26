@@ -241,6 +241,16 @@
 		file_server
 	}
 
+	# Content-hashed Vite build assets (…-BoY-d8R4.webp) — serve straight from
+	# disk instead of through Puma. The hash makes each URL immutable, so the
+	# browser fetches it once and reuses it for a year without revalidating.
+	# bin/vite build writes them to public/vite/assets/, so root is public/.
+	handle /vite/* {
+		root * /Users/grillermo/c/comunidad-antesis/public
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
 	# Proxy to blue (4021) and green (4022) — balance across both
 	handle {
 		reverse_proxy localhost:4021 localhost:4022 {
