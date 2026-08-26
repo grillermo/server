@@ -236,6 +236,13 @@
 
 # comunidad-antesis
 :4020 {
+	# Compress before the response leaves the box. Cloudflare fetches every
+	# uncached HTML page from here, and this host's uplink (~107 Mbit) is far
+	# narrower than its downlink, so origin egress is the scarce direction:
+	# the landing page drops from ~4.2KB to ~1.4KB. zstd first, gzip as the
+	# fallback for clients that do not advertise zstd.
+	encode zstd gzip
+
 	handle /public/* {
 		root * /Users/grillermo/c/comunidad-antesis/
 		file_server
