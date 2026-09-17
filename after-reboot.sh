@@ -25,6 +25,8 @@ SERVICES=(
     "top_cpu"
     "comunidad-antesis"
     "torlink"
+    "ntfyllermo"
+    "my-claude-usage"
 )
 
 # Function to create and configure a tmux session
