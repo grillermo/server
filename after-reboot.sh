@@ -18,7 +18,7 @@ SERVICES=(
     "ebooks"
     "readitsoon"
     "blog_grillermo_com"
-    "file_to_s3"
+    "file_server"
     "yosubee"
     "awh"
     "patatatube"
