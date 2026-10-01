@@ -243,9 +243,14 @@
 	# fallback for clients that do not advertise zstd.
 	encode zstd gzip
 
-	handle /public/* {
-		root * /Users/grillermo/c/comunidad-antesis/
-		file_server
+	# public/ also holds build output and internal pages that must never leave
+	# the box: the SSR bundle and its source map (vite-ssr), dev/test builds and
+	# the QA checklist. Rails' static file server would hand them out too, so
+	# refuse them here. A handle (not a bare respond) because Caddy orders every
+	# handle before respond, and the catch-all proxy below would answer first.
+	@private path /vite-ssr/* /vite-dev/* /vite-test/* /e2e-check.html
+	handle @private {
+		respond "Not Found" 404
 	}
 
 	# Content-hashed Vite build assets (…-BoY-d8R4.webp) — serve straight from
