@@ -292,3 +292,38 @@
 		}
 	}
 }
+
+# comunidad-antesis-staging — the Cloudflare tunnel for comunidad-antesis.chiq.me
+# points at :4025. One Puma slot (4026), no load balancing — see ./serve-staging.
+:4025 {
+	encode zstd gzip
+
+	# Same as :4020 — keep build output and internal pages private.
+	@private path /vite-ssr/* /vite-dev/* /vite-test/* /e2e-check.html
+	handle @private {
+		respond "Not Found" 404
+	}
+
+	handle /vite/* {
+		root * /Users/grillermo/c/comunidad-antesis-staging/public
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	handle {
+		reverse_proxy localhost:4026 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	log {
+		output file /Users/grillermo/c/comunidad-antesis-staging/log/caddy_access.log {
+			roll_size 100mb # Rotate when a log reaches 100MB
+			roll_keep 10 # Keep a maximum of 10 log files
+			roll_keep_for 7d # Keep logs for exactly 7 days
+		}
+	}
+}

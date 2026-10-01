@@ -8,7 +8,8 @@ brew services start redis&
 BASE_DIR="/Users/grillermo/c"
 TOP_CPU_WRAPPER="/Users/grillermo/c/server/top-cpu-service-wrapper"
 
-# Array of all your services
+# Array of all your services. Each entry is a directory under $BASE_DIR, run
+# with ./serve; "dir:script" runs a different script from that directory.
 SERVICES=(
     "kimai"
     "rulinky"
@@ -24,6 +25,7 @@ SERVICES=(
     "patatatube"
     "top_cpu"
     "comunidad-antesis"
+    "comunidad-antesis-staging:./serve-staging"
     "torlink"
     "ntfyllermo"
     "my-claude-usage"
@@ -31,8 +33,10 @@ SERVICES=(
 
 # Function to create and configure a tmux session
 setup_tmux_session() {
-    local session_name=$1
+    local session_name=${1%%:*}
     local dir_name=$session_name
+    local serve_script=./serve
+    [[ $1 == *:* ]] && serve_script=${1#*:}
     
     local full_path="$BASE_DIR/$dir_name"
 
@@ -44,7 +48,7 @@ setup_tmux_session() {
     # --- PANE 1: The Log Tail (Left Side) ---
     tmux send-keys -t "$session_name" "cd $full_path" C-m
     # Touch the log file just in case Monit hasn't created it yet
-    tmux send-keys -t "$session_name" "exec -a \"$session_name\" \"$TOP_CPU_WRAPPER\" \"$session_name\" \"$full_path\" ./serve" C-m
+    tmux send-keys -t "$session_name" "exec -a \"$session_name\" \"$TOP_CPU_WRAPPER\" \"$session_name\" \"$full_path\" $serve_script" C-m
     
     # --- PANE 2: The Code Editor (Right Side) ---
     tmux split-window -h -t "$session_name"
