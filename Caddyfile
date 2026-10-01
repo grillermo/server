@@ -327,3 +327,51 @@
 		}
 	}
 }
+
+# cal.diy — the Cloudflare tunnel for cal.grillermo.com points at :3020.
+# `next start` runs on :3021 (see ~/c/cal.diy/serve).
+:3020 {
+	encode zstd gzip
+
+	@blocked {
+		path_regexp \.(php|aspx|asp|jsp|cgi)$
+		path /wp-admin* /wp-login.php /xmlrpc.php
+	}
+	respond @blocked "Not Found" 404
+
+	# Content-hashed JS/CSS/fonts from `next build`: serve straight from disk.
+	# A chunk missing on disk (e.g. mid-build) falls through to Next.
+	handle_path /_next/static/* {
+		root * /Users/grillermo/c/cal.diy/apps/web/.next/static
+		@onDisk file
+		handle @onDisk {
+			header Cache-Control "public, max-age=31536000, immutable"
+			header X-Content-Type-Options nosniff
+			file_server
+		}
+		handle {
+			rewrite * /_next/static{path}
+			reverse_proxy localhost:3021 {
+				header_up Host {host}
+				header_up X-Forwarded-Proto https
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:3021 {
+			header_up Host {host}
+			# TLS ends at Cloudflare, so {scheme} here is always http; Cal builds
+			# OAuth callbacks and secure cookies from this header.
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	log {
+		output file /opt/homebrew/var/log/caddy-cal-diy.log {
+			roll_size 100mb
+			roll_keep 10
+			roll_keep_for 7d
+		}
+	}
+}
