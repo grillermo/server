@@ -4,6 +4,12 @@
 	file_server
 }
 
+# staging_grillermo_com — the Cloudflare tunnel for staging.grillermo.com points at :6633.
+:6633 {
+	root * /Users/grillermo/c/staging_grillermo_com
+	file_server
+}
+
 # Auto Email Classifier
 :3000 {
 	# 1. Serve static assets 
