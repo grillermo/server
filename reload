@@ -1,0 +1,114 @@
+#!/bin/sh
+# Apply Caddyfile changes, or restart Caddy into a known-good state.
+#
+#   ./reload            validate, then graceful reload (no dropped connections)
+#   ./reload --restart  validate, then restart the process — needed when
+#                       ~/c/patatatube/.env changes: {env.*} placeholders are
+#                       read once at process start, and a reload keeps them
+#   ./reload --check    validate and health-check only; changes nothing
+#
+# Run it on the Mac mini. The one Caddy that should exist is the launchd job
+# com.grillermo.caddy (~/Library/LaunchAgents/com.grillermo.caddy.plist), which
+# passes --envfile. `brew services start|restart caddy` starts a second Caddy
+# *without* the envfile that shares every port with the first, so half the
+# PatataTube requests see an empty UPLOAD_TOKEN. This script stops any such
+# stray before reloading, and checks afterwards that exactly one Caddy holds
+# each site port.
+set -eu
+
+LABEL=com.grillermo.caddy
+DOMAIN=gui/$(id -u)
+CADDY=/opt/homebrew/opt/caddy/bin/caddy
+BREW=/opt/homebrew/bin/brew
+CONFIG=/opt/homebrew/etc/Caddyfile
+ENVFILE=/Users/grillermo/c/patatatube/.env
+HERE=$(cd "$(dirname "$0")" && pwd)
+
+die() {
+  printf 'reload: %s\n' "$*" >&2
+  exit 1
+}
+
+say() {
+  printf 'reload: %s\n' "$*"
+}
+
+RESTART=0
+CHECK=0
+case ${1:-} in
+  "") ;;
+  --restart) RESTART=1 ;;
+  --check) CHECK=1 ;;
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) die "unknown argument: $1 (try --help)" ;;
+esac
+
+launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 \
+  || die "launchd job $LABEL not loaded — run this on the Mac mini"
+[ -x "$CADDY" ] || die "caddy not found at $CADDY"
+[ "$(readlink "$CONFIG")" = "$HERE/Caddyfile" ] \
+  || die "$CONFIG does not point at $HERE/Caddyfile"
+
+# 1. Validate first: a bad config must never reach the running server.
+say "validating $CONFIG"
+"$CADDY" validate --config "$CONFIG" --adapter caddyfile --envfile "$ENVFILE" >/dev/null 2>&1 \
+  || { "$CADDY" validate --config "$CONFIG" --adapter caddyfile --envfile "$ENVFILE" 2>&1 | grep -v '"level":"info"' | tail -5; die "invalid config, nothing changed"; }
+
+job_pid() {
+  launchctl print "$DOMAIN/$LABEL" 2>/dev/null | awk '$1 == "pid" { print $3; exit }'
+}
+
+if [ "$CHECK" -eq 0 ]; then
+# 2. Stop any Caddy that isn't the launchd job.
+if "$BREW" services list 2>/dev/null | awk '$1 == "caddy" { print $2 }' | grep -qv '^none$'; then
+  say "stopping stray Homebrew Caddy service (brew services)"
+  "$BREW" services stop caddy >/dev/null
+fi
+
+PID=$(job_pid)
+for p in $(pgrep -x caddy || true); do
+  [ "$p" = "$PID" ] && continue
+  say "killing stray caddy pid $p: $(ps -o command= -p "$p")"
+  kill "$p" 2>/dev/null || true
+done
+
+# 3. Reload in place, or restart the process. A failed reload (e.g. the admin
+#    API is unreachable) falls back to a restart.
+if [ "$RESTART" -eq 0 ] && [ -n "$PID" ]; then
+  say "graceful reload of pid $PID"
+  if ! "$CADDY" reload --config "$CONFIG" --adapter caddyfile >/dev/null 2>&1; then
+    say "reload failed, restarting instead"
+    RESTART=1
+  fi
+fi
+if [ "$RESTART" -eq 1 ] || [ -z "$PID" ]; then
+  say "restarting $LABEL"
+  launchctl kickstart -k "$DOMAIN/$LABEL"
+fi
+sleep 2
+fi
+
+# 4. Health check: one launchd-owned Caddy, with the envfile, on every port.
+PID=$(job_pid)
+[ -n "$PID" ] || die "$LABEL is not running — see /opt/homebrew/var/log/caddy.log"
+ps -o command= -p "$PID" | grep -q -- "--envfile $ENVFILE" \
+  || die "pid $PID was started without --envfile $ENVFILE"
+
+fail=0
+# shellcheck disable=SC2013 # one port per line, no spaces
+for port in $(sed -n 's/^:\([0-9][0-9]*\) {.*/\1/p' "$HERE/Caddyfile"); do
+  owners=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u | tr '\n' ' ')
+  code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$port/" || true)
+  if [ "$owners" != "$PID " ]; then
+    printf '  :%-5s FAIL listeners: %s(want %s)\n' "$port" "${owners:-none }" "$PID"
+    fail=1
+  elif [ "$code" = 000 ] || [ "$code" -ge 500 ]; then
+    # Caddy is up but the app behind it isn't answering: report, don't fail.
+    printf '  :%-5s WARN caddy ok, HTTP %s from the site\n' "$port" "$code"
+  else
+    printf '  :%-5s ok   HTTP %s\n' "$port" "$code"
+  fi
+done
+
+[ "$fail" -eq 0 ] || die "port check failed"
+say "done — caddy pid $PID"
