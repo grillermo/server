@@ -143,6 +143,22 @@
 		not header Cookie *upload_token={env.UPLOAD_TOKEN}*
 	}
 
+	# 0. Reject unauthenticated uploads before proxying. FastAPI only runs
+	#    _check_token after Starlette has parsed the whole multipart body, so a
+	#    bad token used to stream gigabytes over the LAN just to get a 401 —
+	#    enough to saturate the 100 Mbit link and drop the Cloudflare tunnel.
+	#    Answering here without reading the body means curl (Expect:
+	#    100-continue) never sends it. Bearer only, matching _check_token.
+	@uploadunauth {
+		method POST
+		path /upload /upload/*
+		not header Authorization "Bearer {env.UPLOAD_TOKEN}"
+	}
+	handle @uploadunauth {
+		header Content-Type application/json
+		respond `{"detail":"Unauthorized"}` 401
+	}
+
 	# 1. Static assets (unauthenticated; URL path == disk path)
 	handle /assets/* {
 		header Cache-Control "public, max-age=3600"
