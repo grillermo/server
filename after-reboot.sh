@@ -6,7 +6,6 @@ brew services start redis&
 
 # Base directory for all projects
 BASE_DIR="/Users/grillermo/c"
-TOP_CPU_WRAPPER="/Users/grillermo/c/server/top-cpu-service-wrapper"
 
 # Array of all your services. Each entry is a directory under $BASE_DIR, run
 # with ./serve; "dir:script" runs a different script from that directory.
@@ -47,8 +46,12 @@ setup_tmux_session() {
     
     # --- PANE 1: The Log Tail (Left Side) ---
     tmux send-keys -t "$session_name" "cd $full_path" C-m
-    # Touch the log file just in case Monit hasn't created it yet
-    tmux send-keys -t "$session_name" "exec -a \"$session_name\" \"$TOP_CPU_WRAPPER\" \"$session_name\" \"$full_path\" $serve_script" C-m
+    # ./serve sources serve-in-place.sh, which starts the server in its own
+    # titled pane through top-cpu-service-wrapper and returns, leaving this
+    # pane an ordinary shell. Services whose ./serve doesn't source
+    # serve-in-place.sh yet run in the foreground here, unwrapped, until
+    # converted.
+    tmux send-keys -t "$session_name" "$serve_script" C-m
     
     # --- PANE 2: The Code Editor (Right Side) ---
     tmux split-window -h -t "$session_name"
@@ -65,5 +68,3 @@ for service in "${SERVICES[@]}"; do
 done
 
 echo "All tmux sessions created!"
-
-# Monit will monitor the services now because it is installed through
