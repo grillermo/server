@@ -397,3 +397,33 @@
 		}
 	}
 }
+
+# boton-de-panico.grillermo.com — the Cloudflare tunnel points at :4050.
+# Static landing page for the Android panic-button app; sources live in
+# ~/c/ayuyo/webpage (committed to the app's repo, no build step).
+:4050 {
+	encode zstd gzip
+
+	root * /Users/grillermo/c/ayuyo/webpage
+
+	@blocked {
+		path_regexp \.(php|aspx|asp|jsp|cgi)$
+		path /wp-admin* /wp-login.php /xmlrpc.php
+	}
+	respond @blocked "Not Found" 404
+
+	# Self-hosted Montserrat: the page claims it loads no external resources,
+	# so these must never move to a CDN.
+	header /fonts/* Cache-Control "public, max-age=31536000, immutable"
+	header X-Content-Type-Options nosniff
+
+	file_server
+
+	log {
+		output file /opt/homebrew/var/log/caddy-boton-de-panico.log {
+			roll_size 100mb
+			roll_keep 10
+			roll_keep_for 7d
+		}
+	}
+}
