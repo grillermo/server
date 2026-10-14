@@ -45,6 +45,10 @@ require "optparse"
 require "uri"
 require "yaml"
 
+# The Caddyfile and routes.yml are UTF-8, but a non-interactive ssh session
+# on Linux has no locale, and Ruby then reads files as US-ASCII.
+Encoding.default_external = Encoding::UTF_8
+
 module Routes
   HERE = File.expand_path(__dir__)
   REGISTRY = ENV.fetch("ROUTES_FILE", File.join(HERE, "routes.yml"))
