@@ -28,12 +28,14 @@ SERVICES=(
     "torlink"
     "ntfyllermo"
     "my-claude-usage"
+    "third-parties/VAR"
 )
 
 # Function to create and configure a tmux session
 setup_tmux_session() {
-    local session_name=${1%%:*}
-    local dir_name=$session_name
+    local dir_name=${1%%:*}
+    # A nested dir (third-parties/VAR) names its session after the last part.
+    local session_name=${dir_name##*/}
     local serve_script=./serve
     [[ $1 == *:* ]] && serve_script=${1#*:}
     
