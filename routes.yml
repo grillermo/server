@@ -1,56 +1,80 @@
-# Published application routes of the Cloudflare tunnel on this machine.
+# Published application routes of the account's Cloudflare tunnels.
 # Edit this file (or use ./routes create|modify|delete), then ./routes sync.
 #
-#   host: http://localhost:3000        Cloudflare -> localhost:3000
-#   host:
-#     service: http://localhost:8080   Cloudflare -> localhost:8080 ...
-#     caddy: http://localhost:8081     ... a generated Caddy block -> localhost:8081
-#     note: anything                   kept across rewrites (comments are not)
+#   tunnels:
+#     NAME:
+#       id: TUNNEL-ID
+#       caddy: true                      only on the tunnel whose machine runs ./Caddyfile
+#       routes:
+#         host: http://localhost:3000        Cloudflare -> localhost:3000
+#         host:
+#           service: http://localhost:8080   Cloudflare -> localhost:8080 ...
+#           caddy: http://localhost:8081     ... a generated Caddy block -> localhost:8081
+#           note: anything                   kept across rewrites (comments are not)
 #
-# Optional per host: path (regex), originRequest (cloudflared options).
-# This file is rewritten by ./routes pull/create/modify/delete.
+# Optional per route: path (regex), originRequest (cloudflared options).
+# A hostname belongs to one tunnel. This file is rewritten by
+# ./routes pull/create/modify/delete.
 
 account_id: 84f3d4684f62201006a708cdd55fbf75
-tunnel_id: 744662cd-00b3-4fcb-a278-b66ee1111d5e
-routes:
-  eslabony.chiq.me: http://localhost:3002
-  ssh.chiq.me: ssh://localhost:22
-  juanpaco.chiq.me: http://localhost:3003
-  torrents.chiq.me:
-    service: http://localhost:9091
-    originRequest:
-      httpHostHeader: ''
-  plex.chiq.me: http://localhost:32400
-  kimai.chiq.me: http://localhost:8001
-  uptimia-to-nfty.chiq.me: http://localhost:8000
-  serve.chiq.me: http://localhost:8009
-  auto-email-classifier.chiq.me: http://localhost:3000
-  labs.chiq.me: http://localhost:3009
-  books.chiq.me: http://localhost:3011
-  rulinky.chiq.me: http://localhost:3002
-  readitsoon.app: http://localhost:4000
-  grillermo.com: http://localhost:80
-  blog.grillermo.com: http://localhost:4321
-  monit.chiq.me: http://localhost:2812
-  yoto_uploader.chiq.me: http://localhost:3200
-  videos.chiq.me: http://localhost:3050
-  yosubee.chiq.me: http://localhost:3200
-  awh.chiq.me: http://localhost:3060
-  files.chiq.me: http://localhost:33333
-  patatatube.chiq.me: http://localhost:3050
-  top_cpu.chiq.me: http://localhost:8080
-  yosubee.com: http://localhost:3200
-  whatsapp.chiq.me: http://localhost:3080
-  bank-app-parser.chiq.me: http://localhost:4030
-  chatwoot.antesis.com.mx: http://localhost:4500
-  torlink.chiq.me: http://127.0.0.1:5173
-  comunidad.antesis.com.mx: http://localhost:4020
-  ntfy.chiq.me: http://localhost:5333
-  my-claude-usage.chiq.me: http://localhost:5001
-  comunidad-antesis.chiq.me: http://localhost:4025
-  files.grillermo.com: http://localhost:33334
-  cal.grillermo.com: http://localhost:3020
-  ipad-send.chiq.me: http://localhost:7777
-  staging.grillermo.com: http://localhost:6633
-  boton-de-panico.grillermo.com: http://localhost:4050
-  git-sync.grillermo.com: http://localhost:7070
+tunnels:
+  macbookpro-development:
+    id: 4b7ce97f-f739-4306-880f-c92a16daf837
+    routes:
+      readitsoon.chiq.me: http://localhost:4000
+      autofix.chiq.me: http://localhost:3090
+      yosubee-dev.chiq.me: http://localhost:3021
+      historial-de-compras.chiq.me: http://localhost:8080
+      yosubee-staging.chiq.me: http://localhost:3200
+      datacenters-time-to-merge-prs.grillermo.com: http://localhost:8000
+      understand-datacenters-models.grillermo.com: http://127.0.0.1:5173
+      comunidad-antesis-development.chiq.me: http://localhost:4020
+  macmini-production:
+    id: 744662cd-00b3-4fcb-a278-b66ee1111d5e
+    caddy: true
+    routes:
+      eslabony.chiq.me: http://localhost:3002
+      ssh.chiq.me: ssh://localhost:22
+      juanpaco.chiq.me: http://localhost:3003
+      torrents.chiq.me:
+        service: http://localhost:9091
+        originRequest:
+          httpHostHeader: ''
+      plex.chiq.me: http://localhost:32400
+      kimai.chiq.me: http://localhost:8001
+      uptimia-to-nfty.chiq.me: http://localhost:8000
+      serve.chiq.me: http://localhost:8009
+      auto-email-classifier.chiq.me: http://localhost:3000
+      labs.chiq.me: http://localhost:3009
+      books.chiq.me: http://localhost:3011
+      rulinky.chiq.me: http://localhost:3002
+      readitsoon.app: http://localhost:4000
+      grillermo.com: http://localhost:80
+      blog.grillermo.com: http://localhost:4321
+      monit.chiq.me: http://localhost:2812
+      yoto_uploader.chiq.me: http://localhost:3200
+      videos.chiq.me: http://localhost:3050
+      yosubee.chiq.me: http://localhost:3200
+      awh.chiq.me: http://localhost:3060
+      files.chiq.me: http://localhost:33333
+      patatatube.chiq.me: http://localhost:3050
+      top_cpu.chiq.me: http://localhost:8080
+      yosubee.com: http://localhost:3200
+      whatsapp.chiq.me: http://localhost:3080
+      bank-app-parser.chiq.me: http://localhost:4030
+      chatwoot.antesis.com.mx: http://localhost:4500
+      torlink.chiq.me: http://127.0.0.1:5173
+      comunidad.antesis.com.mx: http://localhost:4020
+      ntfy.chiq.me: http://localhost:5333
+      my-claude-usage.chiq.me: http://localhost:5001
+      comunidad-antesis.chiq.me: http://localhost:4025
+      files.grillermo.com: http://localhost:33334
+      cal.grillermo.com: http://localhost:3020
+      ipad-send.chiq.me: http://localhost:7777
+      staging.grillermo.com: http://localhost:6633
+      boton-de-panico.grillermo.com: http://localhost:4050
+      git-sync.grillermo.com: http://localhost:7070
+  pc:
+    id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
+    routes:
+      simple-enhance.chiq.me: http://localhost:7000
