@@ -1,0 +1,690 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# The published application routes of this machine's Cloudflare tunnel
+# (hostname -> local service), managed from routes.yml instead of
+# the Zero Trust dashboard.
+#
+#   ./routes pull [--tunnel NAME]   write routes.yml from what Cloudflare has now
+#                                   (default: the tunnel this machine runs)
+#   ./routes sync [--dry-run]       make Cloudflare match routes.yml
+#   ./routes create HOST URL [--caddy PORT]
+#   ./routes modify HOST URL [--caddy PORT | --no-caddy]
+#   ./routes delete|remove HOST
+#   ./routes list
+#
+# create, modify and delete edit routes.yml and then sync; all three take
+# --dry-run. Editing routes.yml by hand and running ./routes sync does the
+# same thing.
+#
+# sync is a full reconcile, in this order:
+#   1. Caddy: an route with `caddy:` gets a generated block in the Caddyfile
+#      (Caddy listens on the service port and proxies to the `caddy:` URL),
+#      then ./reload. Only blocks between `# routes:begin/end` markers are
+#      touched; hand-written sites are never edited.
+#   2. The tunnel's ingress rules (PUT .../configurations — cloudflared picks
+#      them up live, no restart).
+#   3. DNS: a proxied CNAME HOST -> <tunnel-id>.cfargotunnel.com per route, and
+#      any CNAME to this tunnel whose host is no longer listed is deleted.
+#      A host that already has some other record is an error, never clobbered.
+#
+# URL may be a bare port: `./routes create x.grillermo.com 8081` means
+# http://localhost:8081. With --caddy 8080, Cloudflare points at :8080 and the
+# generated Caddy block proxies :8080 to the URL.
+#
+# The API token comes from CLOUDFLARE_API_TOKEN, or from that key in .env next
+# to this script (gitignored). It needs Account / Cloudflare Tunnel / Edit,
+# Zone / Zone / Read and Zone / DNS / Edit on every zone that has a route.
+
+require "json"
+require "net/http"
+require "optparse"
+require "uri"
+require "yaml"
+
+module Routes
+  HERE = File.expand_path(__dir__)
+  REGISTRY = ENV.fetch("ROUTES_FILE", File.join(HERE, "routes.yml"))
+  CADDYFILE = ENV.fetch("ROUTES_CADDYFILE", File.join(HERE, "Caddyfile"))
+  RELOAD = ENV.fetch("ROUTES_RELOAD", File.join(HERE, "reload"))
+  DEFAULT_CATCH_ALL = "http_status:404"
+
+  class Error < StandardError; end
+
+  # Cloudflare v4 REST API, just the calls this script makes.
+  class Api
+    BASE = "https://api.cloudflare.com/client/v4"
+
+    def initialize(token)
+      @token = token
+    end
+
+    def accounts
+      paginate("/accounts")
+    end
+
+    def tunnels(account_id)
+      paginate("/accounts/#{account_id}/cfd_tunnel", "is_deleted" => "false")
+    end
+
+    # nil when the tunnel has never been given a configuration.
+    def tunnel_config(account_id, tunnel_id)
+      result = request(:get, "/accounts/#{account_id}/cfd_tunnel/#{tunnel_id}/configurations")["result"]
+      result && result["config"]
+    end
+
+    def put_tunnel_config(account_id, tunnel_id, config)
+      request(:put, "/accounts/#{account_id}/cfd_tunnel/#{tunnel_id}/configurations", "config" => config)
+    end
+
+    def zones(account_id)
+      paginate("/zones", account_id ? { "account.id" => account_id } : {})
+    end
+
+    def dns_records(zone_id)
+      paginate("/zones/#{zone_id}/dns_records")
+    end
+
+    def create_dns_record(zone_id, record)
+      request(:post, "/zones/#{zone_id}/dns_records", record)
+    end
+
+    def delete_dns_record(zone_id, record_id)
+      request(:delete, "/zones/#{zone_id}/dns_records/#{record_id}")
+    end
+
+    private
+
+    def paginate(path, query = {})
+      results = []
+      page = 1
+      loop do
+        data = request(:get, path, nil, query.merge("page" => page, "per_page" => 50))
+        results.concat(data["result"] || [])
+        info = data["result_info"] || {}
+        break if info["total_pages"].nil? || page >= info["total_pages"].to_i
+
+        page += 1
+      end
+      results
+    end
+
+    def request(method, path, body = nil, query = {})
+      uri = URI(BASE + path)
+      uri.query = URI.encode_www_form(query) unless query.empty?
+      req = Net::HTTP.const_get(method.to_s.capitalize).new(uri)
+      req["Authorization"] = "Bearer #{@token}"
+      if body
+        req["Content-Type"] = "application/json"
+        req.body = JSON.generate(body)
+      end
+      res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |http| http.request(req) }
+      data = begin
+        JSON.parse(res.body.to_s)
+      rescue JSON::ParserError
+        raise Error, "#{method.upcase} #{path}: HTTP #{res.code}, not JSON: #{res.body.to_s[0, 200]}"
+      end
+      unless data["success"]
+        errors = (data["errors"] || []).map { |e| "#{e['code']} #{e['message']}" }.join("; ")
+        raise Error, "#{method.upcase} #{path} failed (HTTP #{res.code}): #{errors}"
+      end
+      data
+    end
+  end
+
+  # routes.yml: the tunnel's published application routes, one per hostname.
+  class Registry
+    KEYS = %w[service caddy path note originRequest].freeze
+    HEADER = <<~YAML
+      # Published application routes of the Cloudflare tunnel on this machine.
+      # Edit this file (or use ./routes create|modify|delete), then ./routes sync.
+      #
+      #   host: http://localhost:3000        Cloudflare -> localhost:3000
+      #   host:
+      #     service: http://localhost:8080   Cloudflare -> localhost:8080 ...
+      #     caddy: http://localhost:8081     ... a generated Caddy block -> localhost:8081
+      #     note: anything                   kept across rewrites (comments are not)
+      #
+      # Optional per host: path (regex), originRequest (cloudflared options).
+      # This file is rewritten by ./routes pull/create/modify/delete.
+    YAML
+
+    attr_accessor :account_id, :tunnel_id, :catch_all, :routes
+
+    def initialize(account_id:, tunnel_id:, catch_all: DEFAULT_CATCH_ALL, routes: {})
+      @account_id = account_id
+      @tunnel_id = tunnel_id
+      @catch_all = catch_all
+      @routes = routes
+    end
+
+    def self.load(path)
+      raise Error, "#{path} not found; run ./routes pull first" unless File.exist?(path)
+
+      data = YAML.safe_load(File.read(path)) || {}
+      raise Error, "#{path}: expected a mapping at the top level" unless data.is_a?(Hash)
+
+      routes = {}
+      (data["routes"] || {}).each do |host, value|
+        host = Routes.normalize_host(host.to_s)
+        route = value.is_a?(String) ? { "service" => value } : value
+        raise Error, "#{path}: #{host} needs a service URL" unless route.is_a?(Hash) && route["service"].is_a?(String)
+
+        unknown = route.keys - KEYS
+        raise Error, "#{path}: #{host} has unknown keys: #{unknown.join(', ')}" unless unknown.empty?
+        raise Error, "#{path}: #{host} is listed twice" if routes.key?(host)
+
+        routes[host] = route
+        caddy_port(host, route) if route["caddy"]
+      end
+      registry = new(
+        account_id: data["account_id"].to_s,
+        tunnel_id: data["tunnel_id"].to_s,
+        catch_all: data["catch_all"] || DEFAULT_CATCH_ALL,
+        routes: routes,
+      )
+      raise Error, "#{path}: account_id and tunnel_id are required" if registry.account_id.empty? || registry.tunnel_id.empty?
+
+      registry
+    end
+
+    # Routes from a tunnel's remote config. Raises on shapes this file can't
+    # express (a hostname used by two rules, a hostless rule before the end).
+    def self.routes_from_ingress(ingress)
+      rules = (ingress || []).dup
+      catch_all = DEFAULT_CATCH_ALL
+      catch_all = rules.pop["service"] if rules.last && rules.last["hostname"].to_s.empty? && rules.last["path"].to_s.empty?
+      routes = {}
+      rules.each do |rule|
+        host = rule["hostname"].to_s
+        raise Error, "the tunnel has a rule with no hostname before the last one: #{rule.to_json}" if host.empty?
+        raise Error, "#{host} appears in more than one ingress rule; routes.yml supports one rule per host" if routes.key?(host)
+
+        route = { "service" => rule["service"] }
+        route["path"] = rule["path"] unless rule["path"].to_s.empty?
+        route["originRequest"] = rule["originRequest"] if rule["originRequest"].is_a?(Hash) && !rule["originRequest"].empty?
+        routes[host] = route
+      end
+      [routes, catch_all]
+    end
+
+    # The port Caddy listens on for an route with `caddy:` (= its service port).
+    def self.caddy_port(host, route)
+      match = %r{\Ahttp://localhost:(\d+)/?\z}.match(route["service"])
+      raise Error, "#{host}: with caddy:, service must be http://localhost:PORT (the port Caddy listens on)" unless match
+
+      match[1].to_i
+    end
+
+    def ingress
+      rules = routes.map do |host, route|
+        rule = { "hostname" => host, "service" => route["service"] }
+        rule["path"] = route["path"] if route["path"]
+        rule["originRequest"] = route["originRequest"] if route["originRequest"]
+        rule
+      end
+      rules << { "service" => catch_all }
+    end
+
+    def save(path)
+      File.write(path, to_yaml)
+    end
+
+    def to_yaml
+      lines = [HEADER, "account_id: #{scalar(account_id)}", "tunnel_id: #{scalar(tunnel_id)}"]
+      lines << "catch_all: #{scalar(catch_all)}" unless catch_all == DEFAULT_CATCH_ALL
+      lines << "routes:"
+      routes.each do |host, route|
+        if route.keys == ["service"]
+          lines << "  #{scalar(host)}: #{scalar(route['service'])}"
+          next
+        end
+        lines << "  #{scalar(host)}:"
+        %w[service caddy path note].each { |key| lines << "    #{key}: #{scalar(route[key])}" if route[key] }
+        next unless route["originRequest"]
+
+        dumped = YAML.dump("originRequest" => route["originRequest"]).sub(/\A---\n/, "")
+        dumped.each_line { |line| lines << "    #{line.chomp}" }
+      end
+      "#{lines.join("\n")}\n"
+    end
+
+    private
+
+    def scalar(value)
+      string = value.to_s
+      plain = string.match?(%r{\A[A-Za-z0-9][\w.:/@+-]*\z}) && !string.match?(/\A(true|false|yes|no|on|off|null|~|[\d.]+)\z/i)
+      plain ? string : string.to_json
+    end
+  end
+
+  # The generated Caddy blocks inside the Caddyfile, between marker comments.
+  class Caddyfile
+    BLOCK = /^# routes:begin (\S+)\n.*?^# routes:end \1\n/m.freeze
+
+    attr_reader :path, :text, :original
+
+    def initialize(path)
+      @path = path
+      @original = File.exist?(path) ? File.read(path) : ""
+      @text = @original.dup
+    end
+
+    # host => { port:, upstream: }
+    def managed
+      @text.to_enum(:scan, BLOCK).map { Regexp.last_match }.each_with_object({}) do |match, out|
+        block = match[0]
+        out[match[1]] = {
+          port: block[/^:(\d+) \{/, 1].to_i,
+          upstream: block[/^\s*reverse_proxy (\S+)/, 1],
+        }
+      end
+    end
+
+    # Some other site in the Caddyfile already listens on this port.
+    def port_taken?(port, host)
+      without_own = @text.gsub(BLOCK) { |block| block.start_with?("# routes:begin #{host}\n") ? "" : block }
+      without_own.match?(/^\S*:#{port}[\s,{]/)
+    end
+
+    def set(host, port, upstream)
+      block = <<~CADDY
+        # routes:begin #{host}
+        # Generated by ./routes from routes.yml; change it there, not here.
+        :#{port} {
+        \treverse_proxy #{upstream}
+        }
+        # routes:end #{host}
+      CADDY
+      if managed.key?(host)
+        @text = @text.sub(block_for(host), block)
+      else
+        @text = @text.sub(/\n*\z/, "\n\n") unless @text.empty?
+        @text += block
+      end
+    end
+
+    def remove(host)
+      @text = @text.sub(/\n*#{Regexp.escape(block_for(host))}/) { "\n" }
+      @text = @text.sub(/\n+\z/, "\n")
+    end
+
+    def changed?
+      @text != @original
+    end
+
+    def save
+      File.write(@path, @text)
+    end
+
+    def restore
+      File.write(@path, @original)
+    end
+
+    private
+
+    def block_for(host)
+      @text.to_enum(:scan, BLOCK).map { Regexp.last_match }.find { |m| m[1] == host }[0]
+    end
+  end
+
+  # Works out what has to change to make Cloudflare and the Caddyfile match a
+  # registry, prints it, and applies it.
+  class Sync
+    Plan = Struct.new(:caddy, :ingress, :remote_config, :dns_create, :dns_delete, :lines) do
+      def empty?
+        lines.empty?
+      end
+    end
+
+    def initialize(registry:, api:, caddyfile:, reload:, out: $stdout)
+      @registry = registry
+      @api = api
+      @caddyfile = caddyfile
+      @reload = reload
+      @out = out
+    end
+
+    # Raises before anything changes if the registry can't be applied.
+    def plan
+      lines = []
+      caddy = plan_caddy(lines)
+      remote_config = @api.tunnel_config(@registry.account_id, @registry.tunnel_id) || {}
+      ingress = plan_ingress(remote_config, lines)
+      dns_create, dns_delete = plan_dns(lines)
+      Plan.new(caddy, ingress, remote_config, dns_create, dns_delete, lines)
+    end
+
+    def apply(plan)
+      if plan.caddy.changed?
+        plan.caddy.save
+        unless @reload.call
+          plan.caddy.restore
+          raise Error, "./reload failed; the Caddyfile was put back and nothing on Cloudflare changed"
+        end
+      end
+      if plan.ingress
+        @api.put_tunnel_config(@registry.account_id, @registry.tunnel_id, plan.remote_config.merge("ingress" => plan.ingress))
+      end
+      plan.dns_create.each { |zone_id, record| @api.create_dns_record(zone_id, record) }
+      plan.dns_delete.each { |zone_id, record| @api.delete_dns_record(zone_id, record["id"]) }
+    end
+
+    def print(plan)
+      if plan.empty?
+        @out.puts "Everything already matches routes.yml."
+      else
+        plan.lines.each { |line| @out.puts line }
+      end
+    end
+
+    private
+
+    def plan_caddy(lines)
+      caddy = Caddyfile.new(@caddyfile)
+      current = caddy.managed
+      wanted = @registry.routes.select { |_, route| route["caddy"] }
+      wanted.each do |host, route|
+        port = Registry.caddy_port(host, route)
+        have = current[host]
+        next if have && have[:port] == port && have[:upstream] == route["caddy"]
+        raise Error, "#{host}: port :#{port} is already used by another site in #{@caddyfile}" if caddy.port_taken?(port, host)
+
+        caddy.set(host, port, route["caddy"])
+        lines << "#{have ? '~' : '+'} caddy  :#{port} -> #{route['caddy']}  (#{host})"
+      end
+      (current.keys - wanted.keys).each do |host|
+        caddy.remove(host)
+        lines << "- caddy  :#{current[host][:port]} -> #{current[host][:upstream]}  (#{host})"
+      end
+      caddy
+    end
+
+    # The new ingress list, or nil when the remote one already matches.
+    def plan_ingress(remote_config, lines)
+      desired = @registry.ingress
+      remote = normalize(remote_config["ingress"] || [])
+      return nil if normalize(desired) == remote
+
+      remote_by_host = remote.each_with_object({}) { |rule, out| out[rule["hostname"]] = rule if rule["hostname"] }
+      desired_by_host = normalize(desired).each_with_object({}) { |rule, out| out[rule["hostname"]] = rule if rule["hostname"] }
+      desired_by_host.each do |host, rule|
+        old = remote_by_host[host]
+        if old.nil?
+          lines << "+ route  #{host} -> #{describe(rule)}"
+        elsif old != rule
+          lines << "~ route  #{host}: #{describe(old)} => #{describe(rule)}"
+        end
+      end
+      (remote_by_host.keys - desired_by_host.keys).each do |host|
+        lines << "- route  #{host} -> #{describe(remote_by_host[host])}"
+      end
+      lines << "~ route  (rule order or catch-all)" if lines.none? { |line| line.include?(" route ") }
+      desired
+    end
+
+    def plan_dns(lines)
+      target = "#{@registry.tunnel_id}.cfargotunnel.com"
+      zones = @api.zones(@registry.account_id)
+      records = zones.each_with_object({}) { |zone, out| out[zone["id"]] = @api.dns_records(zone["id"]) }
+      creates = []
+      errors = []
+      @registry.routes.each_key do |host|
+        zone = zone_for(host, zones)
+        # The route still syncs; only its DNS is out of reach.
+        unless zone
+          @out.puts "! dns    #{host}: skipped, the token sees no zone for it (#{zones.map { |z| z['name'] }.join(', ')})"
+          next
+        end
+        existing = records[zone["id"]].select { |record| record["name"] == host }
+        next if existing.any? { |record| tunnel_record?(record, target) }
+
+        if existing.empty?
+          creates << [zone["id"], { "type" => "CNAME", "name" => host, "content" => target, "proxied" => true, "comment" => "./routes" }]
+          lines << "+ dns    #{host} CNAME #{target}"
+        else
+          shown = existing.map { |record| "#{record['type']} #{record['content']}" }.join(", ")
+          errors << "#{host} already has DNS #{shown}; delete it in the dashboard if this route should replace it"
+        end
+      end
+      raise Error, errors.join("\n") unless errors.empty?
+
+      deletes = []
+      records.each do |zone_id, zone_records|
+        zone_records.each do |record|
+          next unless tunnel_record?(record, target) && !@registry.routes.key?(record["name"])
+
+          deletes << [zone_id, record]
+          lines << "- dns    #{record['name']} CNAME #{target}"
+        end
+      end
+      [creates, deletes]
+    end
+
+    def zone_for(host, zones)
+      zones.select { |zone| host == zone["name"] || host.end_with?(".#{zone['name']}") }.max_by { |zone| zone["name"].length }
+    end
+
+    def tunnel_record?(record, target)
+      record["type"] == "CNAME" && record["content"] == target
+    end
+
+    def normalize(rules)
+      rules.map do |rule|
+        out = { "service" => rule["service"] }
+        out["hostname"] = rule["hostname"] unless rule["hostname"].to_s.empty?
+        out["path"] = rule["path"] unless rule["path"].to_s.empty?
+        out["originRequest"] = rule["originRequest"] if rule["originRequest"].is_a?(Hash) && !rule["originRequest"].empty?
+        out
+      end
+    end
+
+    def describe(rule)
+      [rule["service"], rule["path"] && "path #{rule['path']}", rule["originRequest"] && "originRequest #{rule['originRequest'].to_json}"].compact.join(", ")
+    end
+  end
+
+  def self.normalize_host(host)
+    host = host.strip.downcase.sub(/\.\z/, "")
+    raise Error, "#{host.inspect} is not a hostname" unless host.match?(/\A(\*\.)?([a-z0-9_-]+\.)+[a-z]{2,}\z/)
+
+    host
+  end
+
+  def self.normalize_url(url)
+    return "http://localhost:#{url}" if url.match?(/\A\d+\z/)
+    return "http://#{url}" if url.match?(/\Alocalhost:\d+\z/)
+    raise Error, "#{url.inspect} is not a URL (try http://localhost:8081 or just 8081)" unless url.match?(/\A[a-z_]+:/)
+
+    url
+  end
+
+  class CLI
+    USAGE = File.read(__FILE__)[/^#   \.\/routes.*?(?=^#\n)/m].gsub(/^# ?/, "")
+
+    def initialize(argv, api: nil, out: $stdout, reload: nil)
+      @argv = argv.dup
+      @api = api
+      @out = out
+      @reload = reload || -> { system(RELOAD) }
+    end
+
+    def run
+      dry_run = false
+      caddy = nil
+      no_caddy = false
+      tunnel = nil
+      parser = OptionParser.new do |opts|
+        opts.banner = USAGE
+        opts.on("--dry-run") { dry_run = true }
+        opts.on("--caddy PORT", Integer) { |port| caddy = port }
+        opts.on("--no-caddy") { no_caddy = true }
+        opts.on("--tunnel NAME") { |name| tunnel = name }
+      end
+      args = parser.parse(@argv)
+      command = args.shift
+      case command
+      when "pull" then pull(tunnel)
+      when "sync" then sync(Registry.load(REGISTRY), dry_run: dry_run)
+      when "list" then list
+      when "create" then create(*want(args, 2), caddy: caddy, dry_run: dry_run)
+      when "modify" then modify(*want(args, 2), caddy: caddy, no_caddy: no_caddy, dry_run: dry_run)
+      when "delete", "remove" then delete(*want(args, 1), dry_run: dry_run)
+      else
+        @out.puts USAGE
+        return command.nil? || command == "help" ? 0 : 2
+      end
+      0
+    end
+
+    private
+
+    def want(args, count)
+      raise Error, "expected #{count} argument(s), got #{args.length}\n\n#{USAGE}" unless args.length == count
+
+      args
+    end
+
+    def api
+      @api ||= Api.new(token)
+    end
+
+    def token
+      return ENV["CLOUDFLARE_API_TOKEN"] if ENV["CLOUDFLARE_API_TOKEN"].to_s != ""
+
+      env = File.join(HERE, ".env")
+      line = File.exist?(env) && File.readlines(env).find { |l| l.start_with?("CLOUDFLARE_API_TOKEN=") }
+      raise Error, "set CLOUDFLARE_API_TOKEN, or put CLOUDFLARE_API_TOKEN=... in #{env}" unless line
+
+      line.split("=", 2)[1].strip.delete('"\'')
+    end
+
+    def pull(tunnel)
+      # Some tokens get an empty /accounts; their zones still name the account.
+      accounts = api.accounts
+      accounts = api.zones(nil).map { |zone| zone["account"] }.uniq { |account| account["id"] } if accounts.empty?
+      raise Error, "the token can't see any account or zone" if accounts.empty?
+
+      found = accounts.flat_map { |account| api.tunnels(account["id"]).map { |tunnel| [account, tunnel] } }
+      remote = found.select { |_, tunnel| tunnel["config_src"] == "cloudflare" }
+      wanted = tunnel || running_tunnel_id
+      remote = remote.select { |_, t| [t["id"], t["name"]].include?(wanted) } if wanted
+      if remote.length != 1
+        shown = found.map { |a, t| "#{t['name']} (#{t['id']}, #{t['config_src']}-managed, account #{a['name']})" }
+        raise Error, "pick a tunnel with --tunnel NAME; dashboard-managed tunnels found:\n  #{shown.join("\n  ")}"
+      end
+      account, tunnel = remote.first
+      routes, catch_all = Registry.routes_from_ingress((api.tunnel_config(account["id"], tunnel["id"]) || {})["ingress"])
+      keep_local_fields(routes)
+      registry = Registry.new(account_id: account["id"], tunnel_id: tunnel["id"], catch_all: catch_all, routes: routes)
+      registry.save(REGISTRY)
+      @out.puts "Wrote #{REGISTRY}: #{routes.length} routes on tunnel #{tunnel['name']} (#{tunnel['id']})."
+    end
+
+    # The tunnel id inside the --token of the cloudflared running on this
+    # machine (base64 JSON: a = account, t = tunnel, s = secret), if any.
+    def running_tunnel_id
+      token = `ps axww -o command= 2>/dev/null`[/cloudflared .*--token[ =](\S+)/, 1]
+      token && JSON.parse(token.unpack1("m"))["t"]
+    rescue JSON::ParserError, ArgumentError
+      nil
+    end
+
+    # caddy: and note: exist only in routes.yml; keep them across a pull.
+    def keep_local_fields(routes)
+      return unless File.exist?(REGISTRY)
+
+      Registry.load(REGISTRY).routes.each do |host, old|
+        route = routes[host] or next
+        route["caddy"] = old["caddy"] if old["caddy"] && old["service"] == route["service"]
+        route["note"] = old["note"] if old["note"]
+      end
+    end
+
+    def list
+      registry = Registry.load(REGISTRY)
+      width = registry.routes.keys.map(&:length).max.to_i
+      registry.routes.each do |host, route|
+        via = route["caddy"] ? "  -> caddy -> #{route['caddy']}" : ""
+        @out.puts "#{host.ljust(width)}  #{route['service']}#{via}"
+      end
+    end
+
+    def create(host, url, caddy:, dry_run:)
+      host = Routes.normalize_host(host)
+      url = Routes.normalize_url(url)
+      registry = Registry.load(REGISTRY)
+      raise Error, "#{host} is already in routes.yml; use ./routes modify" if registry.routes.key?(host)
+
+      registry.routes[host] = caddy ? { "service" => "http://localhost:#{caddy}", "caddy" => url } : { "service" => url }
+      sync(registry, dry_run: dry_run, save: true)
+    end
+
+    # With caddy: in front, URL is the new upstream behind Caddy; otherwise it
+    # is where Cloudflare points. --caddy PORT puts Caddy in front (or moves
+    # it), --no-caddy takes it out.
+    def modify(host, url, caddy:, no_caddy:, dry_run:)
+      host = Routes.normalize_host(host)
+      url = Routes.normalize_url(url)
+      raise Error, "--caddy and --no-caddy together make no sense" if caddy && no_caddy
+
+      registry = Registry.load(REGISTRY)
+      route = registry.routes[host] or raise Error, "#{host} is not in routes.yml; use ./routes create"
+      route = route.dup
+      if no_caddy
+        route.delete("caddy")
+        route["service"] = url
+      elsif caddy
+        route["service"] = "http://localhost:#{caddy}"
+        route["caddy"] = url
+      elsif route["caddy"]
+        route["caddy"] = url
+      else
+        route["service"] = url
+      end
+      registry.routes[host] = route
+      sync(registry, dry_run: dry_run, save: true)
+    end
+
+    def delete(host, dry_run:)
+      host = Routes.normalize_host(host)
+      registry = Registry.load(REGISTRY)
+      registry.routes.delete(host) or raise Error, "#{host} is not in routes.yml"
+      sync(registry, dry_run: dry_run, save: true)
+    end
+
+    # routes.yml is saved only once the plan has passed every check, so a
+    # rejected change leaves it untouched.
+    def sync(registry, dry_run:, save: false)
+      syncer = Sync.new(registry: registry, api: api, caddyfile: CADDYFILE, reload: @reload, out: @out)
+      plan = syncer.plan
+      syncer.print(plan)
+      if dry_run
+        @out.puts "(dry run: nothing changed)" unless plan.empty?
+        return
+      end
+      if save
+        registry.save(REGISTRY)
+        saved = true
+      end
+      return if plan.empty?
+
+      syncer.apply(plan)
+      @out.puts "Done."
+    rescue Error, SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError => e
+      raise Error, "#{e.message}\nroutes.yml was saved; once fixed, run ./routes sync" if saved
+      raise Error, e.message unless e.is_a?(Error)
+
+      raise
+    end
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  begin
+    exit Routes::CLI.new(ARGV).run
+  rescue Routes::Error, OptionParser::ParseError => e
+    warn "routes: #{e.message}"
+    exit 1
+  end
+end

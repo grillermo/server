@@ -1,3 +1,4 @@
 localhost.DS_Store
 .DS_Store
 logs
+.env
