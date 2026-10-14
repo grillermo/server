@@ -457,3 +457,11 @@
 		}
 	}
 }
+
+# elisa — "Elisa aprende música" (~/c/bbsharp, deployed with `make deploy`). bluey.chiq.me points at :8096.
+:8096 {
+	root * /Users/grillermo/c/elisa-www
+	file_server
+	@html path / /index.html
+	header @html Cache-Control "no-cache"
+}
