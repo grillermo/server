@@ -77,6 +77,7 @@ tunnels:
       f.chiq.me: http://localhost:33333
       var.chiq.me: http://127.0.0.1:9998
       bluey.chiq.me: http://localhost:8096
+      machines.chiq.me: http://localhost:5320
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
