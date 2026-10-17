@@ -10,7 +10,7 @@
 # Why in place: git-sync runs ./activate -> ./serve after landing new code,
 # with no tty. A foreground server would start a second copy beside the one
 # in tmux. Pane commands go through top-cpu-service-wrapper, as
-# after-reboot.sh's do, so top_cpu still attributes the server to its service.
+# after-reboot.sh's do, so monitord still attributes the server to its service.
 
 : "${SESSION:?set SESSION before sourcing serve-in-place.sh}"
 : "${APP_DIR:?set APP_DIR before sourcing serve-in-place.sh}"

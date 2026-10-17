@@ -15,7 +15,7 @@ TOP_CPU_SERVICE_TMUX
 TOP_CPU_ROLE
 ```
 
-The wrapper also writes `~/.local/share/top_cpu/services/<service>.env`, allowing `top_cpu` to attribute descendants by wrapper ancestry.
+The wrapper also writes `~/.local/share/top_cpu/services/<service>.env`, allowing my-machines-monitor's monitord to attribute descendants (the registry path keeps its old `top_cpu` name) by wrapper ancestry.
 
 ## Ruby / Rack / Rails / Puma
 
