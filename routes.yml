@@ -58,7 +58,6 @@ tunnels:
       awh.chiq.me: http://localhost:3060
       files.chiq.me: http://localhost:33333
       patatatube.chiq.me: http://localhost:3050
-      top_cpu.chiq.me: http://localhost:8080
       yosubee.com: http://localhost:3200
       whatsapp.chiq.me: http://localhost:3080
       bank-app-parser.chiq.me: http://localhost:4030
