@@ -22,7 +22,6 @@ SERVICES=(
     "yosubee"
     "awh"
     "patatatube"
-    "top_cpu"
     "comunidad-antesis"
     "comunidad-antesis-staging:./serve-staging"
     "torlink"
