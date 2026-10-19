@@ -78,6 +78,7 @@ tunnels:
       bluey.chiq.me: http://localhost:8096
       machines.chiq.me: http://localhost:5320
       review.chiq.me: http://localhost:19432
+      news.chiq.me: http://localhost:33842
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
