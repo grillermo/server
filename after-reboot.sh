@@ -28,6 +28,7 @@ SERVICES=(
     "ntfyllermo"
     "my-claude-usage"
     "virtual-artifact-renderer"
+    "qotnews"
 )
 
 # Function to create and configure a tmux session
