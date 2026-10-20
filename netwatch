@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# description: Ping the router and two public IPs every few seconds and log
+# each change in connectivity, to tell a home-internet drop from a Caddy or
+# app problem. Runs forever under launchd (see netwatch.plist).
+#
+# Log lines (logs/netwatch.log), one per state change:
+#   2026-10-20 15:57:03 DOWN_ISP   (was UP for 1h09m12s)
+# States:
+#   UP          a public IP answers
+#   DOWN_ISP    the router answers but no public IP does: modem/ISP side
+#   DOWN_LAN    not even the router answers: cable, switch or router itself
+
+ROUTER=${NETWATCH_ROUTER:-192.168.1.254}
+PUBLIC=(1.1.1.1 8.8.8.8)
+INTERVAL=${NETWATCH_INTERVAL:-5}
+LOG=${NETWATCH_LOG:-/Users/grillermo/c/server/logs/netwatch.log}
+
+answers() { ping -c 1 -t 2 "$1" >/dev/null 2>&1; }
+
+probe() {
+    for ip in "${PUBLIC[@]}"; do
+        answers "$ip" && { echo UP; return; }
+    done
+    answers "$ROUTER" && echo DOWN_ISP || echo DOWN_LAN
+}
+
+duration() {
+    local s=$1
+    printf '%dh%02dm%02ds' $((s / 3600)) $((s % 3600 / 60)) $((s % 60))
+}
+
+mkdir -p "$(dirname "$LOG")"
+state=$(probe)
+since=$(date +%s)
+echo "$(date '+%F %T') START      $state (router $ROUTER, public ${PUBLIC[*]}, every ${INTERVAL}s)" >>"$LOG"
+
+while sleep "$INTERVAL"; do
+    now_state=$(probe)
+    [[ $now_state == "$state" ]] && continue
+    now=$(date +%s)
+    printf '%s %-10s (was %s for %s)\n' "$(date '+%F %T')" "$now_state" "$state" "$(duration $((now - since)))" >>"$LOG"
+    state=$now_state
+    since=$now
+done
