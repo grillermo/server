@@ -44,7 +44,7 @@ while sleep "$INTERVAL"; do
     # Notify on recovery only: during a drop the phone can't reach ntfy
     # (it goes through the tunnel), so a DOWN alert would arrive late anyway.
     if [[ $now_state == UP ]]; then
-        "$NTFY" "Internet drop: $state" \
+        "$NTFY" "🔴 Internet drop: $state" \
             "$state for $(duration $((now - since))), back at $(date '+%H:%M:%S')" high \
             >/dev/null 2>>"${LOG%.log}.err.log" &
     fi
