@@ -9,11 +9,13 @@
 #   UP          a public IP answers
 #   DOWN_ISP    the router answers but no public IP does: modem/ISP side
 #   DOWN_LAN    not even the router answers: cable, switch or router itself
+# On each return to UP it sends an ntfy push with the drop's kind and length.
 
 ROUTER=${NETWATCH_ROUTER:-192.168.1.254}
 PUBLIC=(1.1.1.1 8.8.8.8)
 INTERVAL=${NETWATCH_INTERVAL:-5}
 LOG=${NETWATCH_LOG:-/Users/grillermo/c/server/logs/netwatch.log}
+NTFY=${NETWATCH_NTFY:-/Users/grillermo/c/agents-configs/bin/ntfy_machines.sh}
 
 answers() { ping -c 1 -t 2 "$1" >/dev/null 2>&1; }
 
@@ -39,6 +41,13 @@ while sleep "$INTERVAL"; do
     [[ $now_state == "$state" ]] && continue
     now=$(date +%s)
     printf '%s %-10s (was %s for %s)\n' "$(date '+%F %T')" "$now_state" "$state" "$(duration $((now - since)))" >>"$LOG"
+    # Notify on recovery only: during a drop the phone can't reach ntfy
+    # (it goes through the tunnel), so a DOWN alert would arrive late anyway.
+    if [[ $now_state == UP ]]; then
+        "$NTFY" "Internet drop: $state" \
+            "$state for $(duration $((now - since))), back at $(date '+%H:%M:%S')" high \
+            >/dev/null 2>>"${LOG%.log}.err.log" &
+    fi
     state=$now_state
     since=$now
 done
