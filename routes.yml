@@ -81,6 +81,7 @@ tunnels:
       news.chiq.me: http://localhost:33842
       music.chiq.me: http://localhost:4533
       insultos-argentinos.grillermo.com: http://localhost:6640
+      walking.chiq.me: http://127.0.0.1:5090
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
