@@ -469,8 +469,10 @@
 # insultos-argentinos — the Cloudflare tunnel for insultos-argentinos.grillermo.com points at :6640.
 :6640 {
 	root * /Users/grillermo/c/insultos-argentinos
-	@private path /.git/* /docs/* /test/* /package.json
+	@private path /.git/* /docs/* /test/* /bin/* /package.json
 	respond @private 404
 	file_server
-	header Cache-Control "no-cache"
+	# Cloudflare caches for an hour (s-maxage) and serves stale while it refreshes;
+	# browsers revalidate after a minute so deploys show up quickly.
+	header Cache-Control "public, max-age=60, s-maxage=3600, stale-while-revalidate=86400"
 }
