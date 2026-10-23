@@ -45,8 +45,10 @@ setup_tmux_session() {
 
     echo "Creating session: $session_name in $full_path"
     
-    # Create the session in the background
-    tmux new-session -d -s "$session_name"
+    # Create the session in the background. ZSH_UNATTENDED keeps zsh from
+    # asking anything (update, dotenv) that would eat the keys sent below;
+    # it is dropped from the session afterwards so panes you open later ask.
+    tmux new-session -d -s "$session_name" -e ZSH_UNATTENDED=1
     
     # --- PANE 1: The Log Tail (Left Side) ---
     tmux send-keys -t "$session_name" "cd $full_path" C-m
@@ -58,8 +60,9 @@ setup_tmux_session() {
     tmux send-keys -t "$session_name" "$serve_script" C-m
     
     # --- PANE 2: The Code Editor (Right Side) ---
-    tmux split-window -h -t "$session_name"
+    tmux split-window -h -t "$session_name" -e ZSH_UNATTENDED=1
     tmux send-keys -t "$session_name" "cd $full_path" C-m
+    tmux set-environment -u -t "$session_name" ZSH_UNATTENDED
 }
 
 # Start the tmux-server 
