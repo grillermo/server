@@ -1,0 +1,13 @@
+[Unit]
+Description=PC boot: bring up always-on servers in tmux (llama, whisker/mema)
+# Linux counterpart of the macmini's login-item trigger for after-reboot.sh.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/c/server/after-reboot.linux.sh
+
+[Install]
+WantedBy=default.target
