@@ -30,6 +30,7 @@ SERVICES=(
     "qotnews"
     "sota-llms"
     "chat-chiq-me"
+    "third-parties/twenty"
 )
 
 # Function to create and configure a tmux session
