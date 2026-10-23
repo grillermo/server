@@ -29,6 +29,7 @@ SERVICES=(
     "my-claude-usage"
     "virtual-artifact-renderer"
     "qotnews"
+    "sota-llms"
 )
 
 # Function to create and configure a tmux session
