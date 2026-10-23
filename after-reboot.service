@@ -1,5 +1,5 @@
 [Unit]
-Description=PC boot: bring up always-on servers in tmux (llama, whisker/mema)
+Description=PC boot: bring up gpu-gate, llama and whisker/mema in tmux session "gpu"
 # Linux counterpart of the macmini's login-item trigger for after-reboot.sh.
 After=network-online.target
 Wants=network-online.target

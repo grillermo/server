@@ -56,8 +56,11 @@ pane_dead() {
 
 # start_pane <title> <argv...>: respawn the titled pane running argv through
 # the wrapper; remain-on-exit keeps a pane that crashed on boot, with output.
+# SERVICE (default $SESSION) is the name monitord attributes the pane to, for a
+# session that holds several services. A session's @serve-layout option, when
+# set, overrides the even-horizontal layout.
 start_pane() {
-  local title="$1" cmd="$2" pid
+  local title="$1" cmd="$2" pid layout
   pid=$(pane_for "$title")
   if [ -z "$pid" ]; then
     if tmux has-session -t "=$SESSION" 2>/dev/null; then
@@ -70,9 +73,10 @@ start_pane() {
   fi
   tmux set-option -t "=$SESSION:" remain-on-exit on >/dev/null
   tmux respawn-pane -k -t "$pid" \
-    "cd '$APP_DIR' && export PATH='$PATH' && exec '$SERVE_WRAPPER' '$SESSION' '$APP_DIR' $cmd"
+    "cd '$APP_DIR' && export PATH='$PATH' TOP_CPU_SERVICE_TMUX='$SESSION' && exec '$SERVE_WRAPPER' '${SERVICE:-$SESSION}' '$APP_DIR' $cmd"
   tmux select-pane -t "$pid" -T "$title" # respawn-pane resets it on some tmux versions
-  tmux select-layout -t "=$SESSION:" even-horizontal >/dev/null
+  layout=$(tmux show-options -qv -t "=$SESSION" @serve-layout 2>/dev/null)
+  tmux select-layout -t "=$SESSION:" "${layout:-even-horizontal}" >/dev/null
 }
 
 dump_pane() {
