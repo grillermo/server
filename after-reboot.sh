@@ -10,7 +10,6 @@ BASE_DIR="/Users/grillermo/c"
 # Array of all your services. Each entry is a directory under $BASE_DIR, run
 # with ./serve; "dir:script" runs a different script from that directory.
 SERVICES=(
-    "kimai"
     "rulinky"
     "auto-email-classifier"
     "labs"
