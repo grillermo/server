@@ -30,6 +30,7 @@ SERVICES=(
     "virtual-artifact-renderer"
     "qotnews"
     "sota-llms"
+    "chat-chiq-me"
 )
 
 # Function to create and configure a tmux session
