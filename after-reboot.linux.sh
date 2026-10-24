@@ -9,7 +9,9 @@
 #   - gate  : gpu-gate, the reverse proxy owning the public ports (8080 for
 #             llama, 8787 for mema). It serializes the GPU: while one server
 #             answers a GPU request the other gets a hardcoded "GPU not
-#             available" 503. See gpu-gate/main.go.
+#             available" 503. It also unloads the idle server's model when
+#             the other one needs the GPU (llama's before a transcription,
+#             mema's before a chat). See gpu-gate/main.go.
 #   - llama : llama.cpp router, on private 127.0.0.1:8081
 #   - mema  : Whisker voice-to-text server (CUDA), on private 127.0.0.1:8788,
 #             started by ~/c/mema/serve (which git-sync also runs on new code)
@@ -31,6 +33,7 @@ export PATH="$HOME/.local/bin:$HOME/src/llama.cpp/build/bin:/usr/local/bin:/usr/
 LLAMA_BIN="$HOME/src/llama.cpp/build/bin/llama-server"
 LLAMA_ENV="$HOME/.config/llama-server/env"          # provides LLAMA_API_KEY
 LLAMA_PRESETS="$HOME/.config/llama-server/models.ini"
+MEMA_ENV="$HOME/c/mema/server/.env"                  # provides WHISKER_AUTH_TOKEN
 GATE_DIR="$HOME/c/server/gpu-gate"
 GATE_BIN="$GATE_DIR/gpu-gate"
 
@@ -55,17 +58,21 @@ tmux set-option -w -t "=$SESSION:" pane-border-format ' #{pane_title} '
 tmux set-option -w -t "=$SESSION:" allow-set-title off # keep the titles ours
 
 # --- gpu-gate (public 8080 + 8787) ------------------------------------------
-# Build it once if the binary is missing (go is in /usr/bin); a plain Go stdlib
-# program, so the build is quick and has no network dependency.
+# Build it when the binary is missing or older than its sources (go is in
+# /usr/bin); a plain Go stdlib program, so the build is quick and has no
+# network dependency.
 if responding http://127.0.0.1:8080/gpu-gate/health; then
   echo "after-reboot.linux: gpu-gate already serving, leaving it"
 else
-  if [ ! -x "$GATE_BIN" ]; then
+  if [ ! -x "$GATE_BIN" ] || [ -n "$(find "$GATE_DIR" -name '*.go' -newer "$GATE_BIN")" ]; then
     echo "after-reboot.linux: building gpu-gate"
     ( cd "$GATE_DIR" && go build -o gpu-gate . ) || echo "after-reboot.linux: gpu-gate build failed"
   fi
   echo "after-reboot.linux: starting gpu-gate"
-  APP_DIR="$GATE_DIR" SERVICE=gpu-gate start_pane gate "'$GATE_BIN'"
+  # The two servers' keys let the gate unload one's model before the other
+  # takes the GPU. Sourced whole; the gate reads only the two it names.
+  APP_DIR="$GATE_DIR" SERVICE=gpu-gate start_pane gate \
+    "bash -c 'set -a; . \"$LLAMA_ENV\"; . \"$MEMA_ENV\"; set +a; exec \"$GATE_BIN\"'"
 fi
 
 # --- llama.cpp router (private 8081, behind the gate) ------------------------

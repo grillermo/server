@@ -39,17 +39,32 @@ request in flight. Add a swap step that runs when ownership changes hands.
    whose status is `loaded` or `loading`, `POST /models/unload`. Then poll
    `/models` every 250 ms until none is `loaded`/`loading`, for at most 20 s.
 3. Proxy the request to mema as today.
-4. When the request finishes, if it is the last mema request in flight, a
-   goroutine calls `POST :8788/v1/unload` with the client's `Authorization`
-   header and only then releases the GPU. The client's response is already
-   complete, so it does not wait for the unload. The GPU stays owned by mema
-   until its memory is freed, so a chat arriving meanwhile gets the 503 and
-   does not start loading into a half-freed card.
+4. ~~When the last mema request finishes, unload mema~~ (superseded
+   2026-10-24, see Revision below).
 
 ### Chat takes the GPU
 
-No new behaviour: proxy to llama. The router autoloads the model (~8 s on the
-first chat after a dictation).
+~~No new behaviour~~ (superseded): if mema's model is resident, the gate calls
+`POST :8788/v1/unload` first, then proxies; the router autoloads llama.
+
+### Revision 2026-10-24: unload only on a switch
+
+The user asked that a model be unloaded only when the *other* server needs the
+GPU, so back-to-back requests to one server never pay the loading cost:
+
+- The gate keeps `resident` (whose model may be in VRAM; `""` at startup, so
+  the first request evicts whatever is there). The first GPU request whose side
+  is not resident runs the eviction of the other side, then sets `resident`.
+- Requests of the same side that arrive while that eviction runs wait for it
+  (they hold the GPU, so the other side still gets the immediate 503). If the
+  eviction fails, they are refused too.
+- Nothing is unloaded after a request finishes.
+- Unloading mema before a chat uses whisker's own token, from
+  `-mema-token-env` (default `WHISKER_AUTH_TOKEN`); the boot script sources
+  `~/c/mema/server/.env` for it. A chat goes ahead even if that unload fails,
+  since llama's `fit = on` sizes itself to the free memory.
+- mema's `/v1/unload` frees every CUDA engine that has `unload()` (Parakeet,
+  faster-whisper, and later Qwen3-ASR).
 
 ### mema `POST /v1/unload` (`~/c/mema/server`)
 
@@ -105,10 +120,11 @@ first chat after a dictation).
 
 ## Decisions
 
-1. After a transcription, mema frees its model and the GPU is left empty; llama
-   reloads on the next chat request.
-   Rationale: user choice ("reload on next chat"); simplest, nothing reloads in
-   the background while dictating.
+1. ~~After a transcription, mema frees its model.~~ Revised 2026-10-24: each
+   model stays loaded until the other server needs the GPU.
+   Rationale: user choice ("unload the model that is not needed for the
+   current request … avoid the initial loading cost"); a switch is the only
+   time anything loads.
 2. Never force-unload llama while it is answering a request.
    Rationale: user requirement; a chat in progress must not be cut off.
 3. A transcription that arrives while llama is answering gets the "GPU busy"

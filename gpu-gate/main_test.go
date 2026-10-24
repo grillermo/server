@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestAcquireLocksOutOtherSide(t *testing.T) {
@@ -99,4 +103,167 @@ func TestHandlerRefusesWhenOtherSideBusy(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "upstream-ok" {
 		t.Fatalf("health got %d %q, want 200 upstream-ok", rec.Code, rec.Body.String())
 	}
+}
+
+// swapGate wires both sides to fake upstreams. Every evict and every request
+// that reaches an upstream is appended to steps; evictErr makes the llama
+// eviction (done for mema) fail, and hold blocks it until closed.
+type swapGate struct {
+	mu       sync.Mutex
+	steps    []string
+	evictErr error
+	hold     chan struct{}
+	g        *gpu
+	mema     http.HandlerFunc
+	llama    http.HandlerFunc
+}
+
+func (f *swapGate) record(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.steps = append(f.steps, s)
+}
+
+func (f *swapGate) got() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.steps, ",")
+}
+
+func newSwapGate(t *testing.T) *swapGate {
+	t.Helper()
+	f := &swapGate{g: &gpu{}}
+	upstream := func(name string) *httputil.ReverseProxy {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			f.record(name)
+			_, _ = io.WriteString(w, name)
+		}))
+		t.Cleanup(srv.Close)
+		u, _ := url.Parse(srv.URL)
+		return httputil.NewSingleHostReverseProxy(u)
+	}
+	f.mema = f.g.handler(side{
+		name:    "mema",
+		proxy:   upstream("transcribe"),
+		isGPU:   memaGPU,
+		busyMsg: `{"detail":"GPU not available"}`,
+		evictOther: func(context.Context) error {
+			if f.hold != nil {
+				<-f.hold
+			}
+			f.record("unload-llama")
+			return f.evictErr
+		},
+		evictMsg: `{"detail":"could not free the GPU"}`,
+	})
+	f.llama = f.g.handler(side{
+		name:    "llama",
+		proxy:   upstream("chat"),
+		isGPU:   llamaGPU,
+		busyMsg: `{"error":"busy"}`,
+		evictOther: func(context.Context) error {
+			f.record("unload-mema")
+			return nil
+		},
+	})
+	return f
+}
+
+func (f *swapGate) transcribe() *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	f.mema(rec, httptest.NewRequest("POST", "/v1/transcribe", strings.NewReader("")))
+	return rec
+}
+
+func (f *swapGate) chat() *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	f.llama(rec, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{}")))
+	return rec
+}
+
+// A model stays loaded while requests keep coming to its own server; only a
+// switch to the other server unloads it.
+func TestHandlerUnloadsOnlyWhenTheGPUChangesHands(t *testing.T) {
+	f := newSwapGate(t)
+	for _, call := range []func() *httptest.ResponseRecorder{
+		f.transcribe, f.transcribe, f.chat, f.chat, f.transcribe,
+	} {
+		if rec := call(); rec.Code != http.StatusOK {
+			t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+		}
+	}
+	want := "unload-llama,transcribe,transcribe,unload-mema,chat,chat,unload-llama,transcribe"
+	if got := f.got(); got != want {
+		t.Fatalf("steps %s, want %s", got, want)
+	}
+}
+
+func TestHandlerRefusesWhenEvictFailsAndRetriesNextTime(t *testing.T) {
+	f := newSwapGate(t)
+	f.evictErr = errors.New("still loaded")
+	rec := f.transcribe()
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "could not free") {
+		t.Fatalf("got %d %q, want 503 evictMsg", rec.Code, rec.Body.String())
+	}
+	if got := f.got(); got != "unload-llama" {
+		t.Fatalf("steps %s, want only unload-llama", got)
+	}
+
+	f.evictErr = nil
+	if rec := f.transcribe(); rec.Code != http.StatusOK {
+		t.Fatalf("retry got %d", rec.Code)
+	}
+	if got := f.got(); got != "unload-llama,unload-llama,transcribe" {
+		t.Fatalf("steps %s", got)
+	}
+}
+
+// A transcription that arrives while another one is still unloading llama
+// waits for it, rather than loading into a card that is still full; a chat
+// meanwhile is refused as usual.
+func TestHandlerSameSideWaitsForTheSwitch(t *testing.T) {
+	f := newSwapGate(t)
+	f.hold = make(chan struct{})
+
+	done := make(chan int, 2)
+	go func() { done <- f.transcribe().Code }()
+	waitFor(t, func() bool {
+		f.g.mu.Lock()
+		defer f.g.mu.Unlock()
+		return f.g.swap != nil
+	})
+	go func() { done <- f.transcribe().Code }()
+	waitFor(t, func() bool {
+		f.g.mu.Lock()
+		defer f.g.mu.Unlock()
+		return f.g.active == 2
+	})
+
+	if rec := f.chat(); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("chat during the switch got %d, want 503", rec.Code)
+	}
+	if got := f.got(); got != "" {
+		t.Fatalf("steps %s before the unload finished, want none", got)
+	}
+
+	close(f.hold)
+	for i := 0; i < 2; i++ {
+		if code := <-done; code != http.StatusOK {
+			t.Fatalf("transcribe got %d", code)
+		}
+	}
+	if got := f.got(); got != "unload-llama,transcribe,transcribe" {
+		t.Fatalf("steps %s", got)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition never became true")
 }
