@@ -11,7 +11,9 @@
 #             answers a GPU request the others get a hardcoded "GPU not
 #             available" 503. It also unloads the idle servers' models when
 #             another one needs the GPU (llama's and tts's before a
-#             transcription, and so on). See gpu-gate/main.go.
+#             transcription, and so on). See gpu-gate/main.go. It also
+#             hands simple-enhance (~/c/simple-enhance, started by its own
+#             ./serve) a GPU lease per job on 127.0.0.1:8792.
 #   - llama : llama.cpp router, on private 127.0.0.1:8081
 #   - mema  : Whisker voice-to-text server (CUDA), on private 127.0.0.1:8788,
 #             started by ~/c/mema/serve (which git-sync also runs on new code)
@@ -39,6 +41,7 @@ LLAMA_ENV="$HOME/.config/llama-server/env"          # provides LLAMA_API_KEY
 LLAMA_PRESETS="$HOME/.config/llama-server/models.ini"
 MEMA_ENV="$HOME/c/mema/server/.env"                  # provides WHISKER_AUTH_TOKEN
 TTS_ENV="$HOME/c/server/tts/.env"                    # provides TTS_AUTH_TOKEN
+ENHANCE_ENV="$HOME/c/simple-enhance/.env"            # provides ENHANCE_AUTH_TOKEN
 GATE_DIR="$HOME/c/server/gpu-gate"
 GATE_BIN="$GATE_DIR/gpu-gate"
 
@@ -62,7 +65,7 @@ tmux set-option -w -t "=$SESSION:" pane-border-status top
 tmux set-option -w -t "=$SESSION:" pane-border-format ' #{pane_title} '
 tmux set-option -w -t "=$SESSION:" allow-set-title off # keep the titles ours
 
-# --- gpu-gate (public 8080 + 8787 + 8790) ------------------------------------
+# --- gpu-gate (public 8080 + 8787 + 8790, lease 8792) ------------------------------------
 # Build it when the binary is missing or older than its sources (go is in
 # /usr/bin); a plain Go stdlib program, so the build is quick and has no
 # network dependency.
@@ -75,9 +78,9 @@ else
   fi
   echo "after-reboot.linux: starting gpu-gate"
   # The servers' keys let the gate unload one's model before another takes
-  # the GPU. Sourced whole; the gate reads only the three it names.
+  # the GPU. Sourced whole; the gate reads only the four it names.
   APP_DIR="$GATE_DIR" SERVICE=gpu-gate start_pane gate \
-    "bash -c 'set -a; . \"$LLAMA_ENV\"; . \"$MEMA_ENV\"; . \"$TTS_ENV\"; set +a; exec \"$GATE_BIN\"'"
+    "bash -c 'set -a; . \"$LLAMA_ENV\"; . \"$MEMA_ENV\"; . \"$TTS_ENV\"; . \"$ENHANCE_ENV\"; set +a; exec \"$GATE_BIN\"'"
 fi
 
 # --- llama.cpp router (private 8081, behind the gate) ------------------------

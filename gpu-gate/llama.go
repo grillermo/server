@@ -46,7 +46,7 @@ func (l *llamaModels) evict(ctx context.Context) error {
 
 	ids, err := l.resident(ctx)
 	if errors.Is(err, errUnreachable) {
-		log.Printf("%v; forwarding the transcription anyway", err)
+		log.Printf("%v; going ahead anyway", err)
 		return nil
 	}
 	if err != nil || len(ids) == 0 {

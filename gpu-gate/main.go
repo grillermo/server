@@ -1,6 +1,6 @@
 // gpu-gate is a reverse proxy that serializes GPU use between the local model
 // servers that share one GPU: the llama.cpp router, the Whisker (mema)
-// voice-to-text server and the TTS server. Each server runs on a private
+// voice-to-text server, the TTS server and simple-enhance. Each server runs on a private
 // loopback port; the gate owns the public port in front of it. While one
 // server is answering a GPU-bound request, a GPU-bound request to another is
 // refused immediately with a hardcoded "GPU not available" 503, instead of
@@ -12,7 +12,8 @@
 // model resident, and another one then cannot load. So the gate remembers
 // whose model is in VRAM, and when a GPU request comes for another server it
 // first frees the others: llama's models through the router API (waiting
-// until they are gone), whisker's and tts's through their POST /v1/unload.
+// until they are gone), whisker's, tts's and simple-enhance's through their
+// POST /v1/unload.
 // The model stays loaded while requests keep coming to the same server, so
 // back-to-back dictations, chats or narrations pay no loading cost; only a
 // switch does. Requests to the same server that arrive during the switch wait
@@ -21,6 +22,12 @@
 //	phone ─▶ :8787 (gate) ─▶ 127.0.0.1:8788  mema/whisker
 //	pi    ─▶ :8080 (gate) ─▶ 127.0.0.1:8081  llama.cpp
 //	mac   ─▶ :8790 (gate) ─▶ 127.0.0.1:8791  tts (~/c/server/tts)
+//
+// simple-enhance (~/c/simple-enhance) is the exception: its GPU work is a
+// background job, not a request, so the gate does not sit in front of it.
+// Its job runner takes a lease from 127.0.0.1:8792/gpu-gate/hold for each
+// enhancement instead (see hold.go), and the gate unloads its worker through
+// its own :7000/v1/unload.
 //
 // Same-server concurrency is allowed (several llama requests, or mema's own
 // serialized calls); only the *other* servers are locked out.
@@ -45,7 +52,7 @@ import (
 // side whose model may be in VRAM, which outlives the requests.
 type gpu struct {
 	mu       sync.Mutex
-	owner    string // "", "llama" or "mema"
+	owner    string // "" or a side's name
 	active   int
 	resident string        // "" until the first switch, so it evicts whatever is there
 	swap     chan struct{} // closed when the owner's switch finishes; nil when none runs
@@ -230,6 +237,9 @@ func main() {
 	llamaKeyEnv := flag.String("llama-key-env", "LLAMA_API_KEY", "env var holding llama-server's --api-key, used to unload its models")
 	memaTokenEnv := flag.String("mema-token-env", "WHISKER_AUTH_TOKEN", "env var holding whisker's token, used to unload its models")
 	ttsTokenEnv := flag.String("tts-token-env", "TTS_AUTH_TOKEN", "env var holding the TTS server's token, used to unload its model")
+	enhanceListen := flag.String("enhance-listen", "127.0.0.1:8792", "address where simple-enhance takes its GPU lease")
+	enhanceServer := flag.String("enhance-server", "127.0.0.1:7000", "simple-enhance's address, used to unload its worker")
+	enhanceTokenEnv := flag.String("enhance-token-env", "ENHANCE_AUTH_TOKEN", "env var holding simple-enhance's unload token")
 	flag.Parse()
 
 	g := &gpu{}
@@ -264,17 +274,27 @@ func main() {
 		token:  ttsToken,
 		client: &http.Client{Timeout: 30 * time.Second},
 	}
+	enhanceToken := os.Getenv(*enhanceTokenEnv)
+	if enhanceToken == "" {
+		log.Printf("warning: $%s is empty; simple-enhance will refuse to unload", *enhanceTokenEnv)
+	}
+	enhancer := &memaModels{
+		name:   "simple-enhance",
+		base:   "http://" + *enhanceServer,
+		token:  enhanceToken,
+		client: &http.Client{Timeout: 30 * time.Second},
+	}
 
 	llama := side{
 		name:    "llama",
 		proxy:   mustProxy(*llamaUpstream),
 		isGPU:   llamaGPU,
-		busyMsg: `{"error":{"message":"GPU not available: another model server (voice-to-text or text-to-speech) is using the GPU. Try again in a moment.","type":"gpu_unavailable","code":"gpu_busy"}}`,
-		// A chat goes ahead even if whisker or tts would not unload: llama's
+		busyMsg: `{"error":{"message":"GPU not available: another model server (voice-to-text, text-to-speech or simple-enhance) is using the GPU. Try again in a moment.","type":"gpu_unavailable","code":"gpu_busy"}}`,
+		// A chat goes ahead even if the others would not unload: llama's
 		// `fit = on` sizes its offload to the memory that is free, while
 		// the others would fail to load into a full card.
 		evictOther: func(ctx context.Context) error {
-			for _, m := range []*memaModels{whisker, speech} {
+			for _, m := range []*memaModels{whisker, speech, enhancer} {
 				if err := m.evict(ctx); err != nil {
 					log.Printf("%s unload failed, loading llama anyway: %v", m.label(), err)
 				}
@@ -286,24 +306,31 @@ func main() {
 		name:       "mema",
 		proxy:      mustProxy(*memaUpstream),
 		isGPU:      memaGPU,
-		busyMsg:    `{"detail":"GPU not available: another model server (llama or text-to-speech) is using the GPU. Try again in a moment."}`,
-		evictOther: evictAll(llamaRouter.evict, speech.evict),
+		busyMsg:    `{"detail":"GPU not available: another model server (llama, text-to-speech or simple-enhance) is using the GPU. Try again in a moment."}`,
+		evictOther: evictAll(llamaRouter.evict, speech.evict, enhancer.evict),
 		evictMsg:   `{"detail":"GPU not available: could not free the GPU from the other model servers. Try again in a moment."}`,
 	}
 	tts := side{
 		name:       "tts",
 		proxy:      mustProxy(*ttsUpstream),
 		isGPU:      ttsGPU,
-		busyMsg:    `{"detail":"GPU not available: another model server (llama or voice-to-text) is using the GPU. Try again in a moment."}`,
-		evictOther: evictAll(llamaRouter.evict, whisker.evict),
+		busyMsg:    `{"detail":"GPU not available: another model server (llama, voice-to-text or simple-enhance) is using the GPU. Try again in a moment."}`,
+		evictOther: evictAll(llamaRouter.evict, whisker.evict, enhancer.evict),
 		evictMsg:   `{"detail":"GPU not available: could not free the GPU from the other model servers. Try again in a moment."}`,
+	}
+	enhance := side{
+		name:       "enhance",
+		busyMsg:    `{"error":"GPU not available: another model server (llama, voice-to-text or text-to-speech) is using the GPU"}`,
+		evictOther: evictAll(llamaRouter.evict, whisker.evict, speech.evict),
+		evictMsg:   `{"error":"GPU not available: could not free the GPU from the other model servers"}`,
 	}
 
 	llamaSrv := &http.Server{Addr: *llamaListen, Handler: g.handler(llama)}
 	memaSrv := &http.Server{Addr: *memaListen, Handler: g.handler(mema)}
 	ttsSrv := &http.Server{Addr: *ttsListen, Handler: g.handler(tts)}
+	enhanceSrv := &http.Server{Addr: *enhanceListen, Handler: g.holdHandler(enhance)}
 
-	errs := make(chan error, 3)
+	errs := make(chan error, 4)
 	go func() {
 		log.Printf("llama gate %s -> %s", *llamaListen, *llamaUpstream)
 		errs <- llamaSrv.ListenAndServe()
@@ -315,6 +342,10 @@ func main() {
 	go func() {
 		log.Printf("tts gate %s -> %s", *ttsListen, *ttsUpstream)
 		errs <- ttsSrv.ListenAndServe()
+	}()
+	go func() {
+		log.Printf("enhance hold %s, unloads %s", *enhanceListen, *enhanceServer)
+		errs <- enhanceSrv.ListenAndServe()
 	}()
 	log.Fatal(<-errs)
 }
