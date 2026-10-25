@@ -12,6 +12,10 @@ they stay out of git.
 
     POST /v1/audio/speech  {"input": "...", "voice": "guillermo", "language": "Spanish", "seed": 7}
                            -> audio/wav (24 kHz mono)
+                           optional: "temperature", "top_p", "top_k", "repetition_penalty",
+                           "non_streaming_mode" (default true: the model sees the whole
+                           text up front, which reads more naturally than its simulated
+                           streaming input)
     POST /v1/unload        frees the GPU; the next speech request loads again
     GET  /v1/health        {"ok": true, "loaded": false, "voices": [...]}
 
@@ -74,6 +78,11 @@ class Speech(BaseModel):
     voice: str
     language: str = "Spanish"
     seed: int | None = None
+    non_streaming_mode: bool = True
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    repetition_penalty: float | None = None
 
 
 @app.post("/v1/audio/speech", dependencies=[Depends(authorized)])
@@ -85,7 +94,9 @@ def speech(req: Speech):
         prompt = voice_prompt(req.voice)
         if req.seed is not None:
             torch.manual_seed(req.seed)
-        wavs, sr = m.generate_voice_clone(text=req.input, language=req.language, voice_clone_prompt=prompt)
+        sampling = {k: v for k, v in req.model_dump(include={"temperature", "top_p", "top_k", "repetition_penalty"}).items() if v is not None}
+        wavs, sr = m.generate_voice_clone(text=req.input, language=req.language, voice_clone_prompt=prompt,
+                                          non_streaming_mode=req.non_streaming_mode, **sampling)
     buf = io.BytesIO()
     sf.write(buf, wavs[0], sr, format="WAV")
     return Response(buf.getvalue(), media_type="audio/wav")
