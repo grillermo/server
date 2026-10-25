@@ -92,3 +92,4 @@ tunnels:
     routes:
       simple-enhance.chiq.me: http://localhost:7000
       llm.chiq.me: http://localhost:8080
+      mema.chiq.me: http://localhost:8787
