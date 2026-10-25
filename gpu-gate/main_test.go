@@ -56,6 +56,8 @@ func TestGPUPredicates(t *testing.T) {
 		{"llama health ungated", llamaGPU, req("GET", "/health"), false},
 		{"llama models ungated", llamaGPU, req("GET", "/v1/models"), false},
 		{"mema transcribe", memaGPU, req("POST", "/v1/transcribe"), true},
+		{"mema openai transcriptions", memaGPU, req("POST", "/v1/audio/transcriptions"), true},
+		{"mema models ungated", memaGPU, req("GET", "/v1/models"), false},
 		{"mema health ungated", memaGPU, req("GET", "/v1/health"), false},
 		{"mema status ungated", memaGPU, req("GET", "/v1/status"), false},
 	}

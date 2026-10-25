@@ -191,9 +191,11 @@ func llamaGPU(r *http.Request) bool {
 		strings.Contains(p, "rerank")
 }
 
-// memaGPU: only transcription uses the GPU; /v1/health and /v1/status do not.
+// memaGPU: only transcription uses the GPU (whisker's /v1/transcribe and the
+// OpenAI-style /v1/audio/transcriptions); /v1/health, /v1/status and
+// /v1/models do not.
 func memaGPU(r *http.Request) bool {
-	return r.Method == http.MethodPost && strings.Contains(r.URL.Path, "transcribe")
+	return r.Method == http.MethodPost && strings.Contains(r.URL.Path, "transcri")
 }
 
 func main() {
