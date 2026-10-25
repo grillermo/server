@@ -60,6 +60,9 @@ func TestGPUPredicates(t *testing.T) {
 		{"mema models ungated", memaGPU, req("GET", "/v1/models"), false},
 		{"mema health ungated", memaGPU, req("GET", "/v1/health"), false},
 		{"mema status ungated", memaGPU, req("GET", "/v1/status"), false},
+		{"tts speech", ttsGPU, req("POST", "/v1/audio/speech"), true},
+		{"tts health ungated", ttsGPU, req("GET", "/v1/health"), false},
+		{"tts unload ungated", ttsGPU, req("POST", "/v1/unload"), false},
 	}
 	for _, c := range cases {
 		if got := c.fn(c.r); got != c.want {
@@ -256,6 +259,24 @@ func TestHandlerSameSideWaitsForTheSwitch(t *testing.T) {
 	}
 	if got := f.got(); got != "unload-llama,transcribe,transcribe" {
 		t.Fatalf("steps %s", got)
+	}
+}
+
+// evictAll frees the others in order and stops at the first one that fails,
+// so the side asking for the GPU never loads into a card still half full.
+func TestEvictAllStopsAtTheFirstFailure(t *testing.T) {
+	var steps []string
+	step := func(name string, err error) func(context.Context) error {
+		return func(context.Context) error { steps = append(steps, name); return err }
+	}
+	if err := evictAll(step("llama", nil), step("whisker", nil))(context.Background()); err != nil {
+		t.Fatalf("evictAll: %v", err)
+	}
+	if err := evictAll(step("llama", errors.New("busy")), step("whisker", nil))(context.Background()); err == nil {
+		t.Fatal("a failed eviction should be returned")
+	}
+	if got := strings.Join(steps, ","); got != "llama,whisker,llama" {
+		t.Fatalf("steps %s, want llama,whisker,llama", got)
 	}
 }
 

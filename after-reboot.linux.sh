@@ -8,16 +8,20 @@
 # pane per process, stacked top to bottom (`tmux attach -t gpu`):
 #   - gate  : gpu-gate, the reverse proxy owning the public ports (8080 for
 #             llama, 8787 for mema). It serializes the GPU: while one server
-#             answers a GPU request the other gets a hardcoded "GPU not
-#             available" 503. It also unloads the idle server's model when
-#             the other one needs the GPU (llama's before a transcription,
-#             mema's before a chat). See gpu-gate/main.go.
+#             answers a GPU request the others get a hardcoded "GPU not
+#             available" 503. It also unloads the idle servers' models when
+#             another one needs the GPU (llama's and tts's before a
+#             transcription, and so on). See gpu-gate/main.go.
 #   - llama : llama.cpp router, on private 127.0.0.1:8081
 #   - mema  : Whisker voice-to-text server (CUDA), on private 127.0.0.1:8788,
 #             started by ~/c/mema/serve (which git-sync also runs on new code)
+#   - tts   : text-to-speech server (Qwen3-TTS, CUDA), on private
+#             127.0.0.1:8791, started by ~/c/server/tts/serve. It loads its
+#             model on the first narration, so it takes no VRAM until used.
 #
 #   pi   -> 127.0.0.1:8080  (gate) -> 127.0.0.1:8081  llama
 #   phone-> <lan>:8787      (gate) -> 127.0.0.1:8788  mema
+#   mac  -> <lan>:8790      (gate) -> 127.0.0.1:8791  tts
 #
 # Idempotent and self-healing: each process is (re)started only when it is not
 # answering its health endpoint, so re-running this (or `systemctl --user restart
@@ -34,6 +38,7 @@ LLAMA_BIN="$HOME/src/llama.cpp/build/bin/llama-server"
 LLAMA_ENV="$HOME/.config/llama-server/env"          # provides LLAMA_API_KEY
 LLAMA_PRESETS="$HOME/.config/llama-server/models.ini"
 MEMA_ENV="$HOME/c/mema/server/.env"                  # provides WHISKER_AUTH_TOKEN
+TTS_ENV="$HOME/c/server/tts/.env"                    # provides TTS_AUTH_TOKEN
 GATE_DIR="$HOME/c/server/gpu-gate"
 GATE_BIN="$GATE_DIR/gpu-gate"
 
@@ -57,7 +62,7 @@ tmux set-option -w -t "=$SESSION:" pane-border-status top
 tmux set-option -w -t "=$SESSION:" pane-border-format ' #{pane_title} '
 tmux set-option -w -t "=$SESSION:" allow-set-title off # keep the titles ours
 
-# --- gpu-gate (public 8080 + 8787) ------------------------------------------
+# --- gpu-gate (public 8080 + 8787 + 8790) ------------------------------------
 # Build it when the binary is missing or older than its sources (go is in
 # /usr/bin); a plain Go stdlib program, so the build is quick and has no
 # network dependency.
@@ -69,10 +74,10 @@ else
     ( cd "$GATE_DIR" && go build -o gpu-gate . ) || echo "after-reboot.linux: gpu-gate build failed"
   fi
   echo "after-reboot.linux: starting gpu-gate"
-  # The two servers' keys let the gate unload one's model before the other
-  # takes the GPU. Sourced whole; the gate reads only the two it names.
+  # The servers' keys let the gate unload one's model before another takes
+  # the GPU. Sourced whole; the gate reads only the three it names.
   APP_DIR="$GATE_DIR" SERVICE=gpu-gate start_pane gate \
-    "bash -c 'set -a; . \"$LLAMA_ENV\"; . \"$MEMA_ENV\"; set +a; exec \"$GATE_BIN\"'"
+    "bash -c 'set -a; . \"$LLAMA_ENV\"; . \"$MEMA_ENV\"; . \"$TTS_ENV\"; set +a; exec \"$GATE_BIN\"'"
 fi
 
 # --- llama.cpp router (private 8081, behind the gate) ------------------------
@@ -95,10 +100,20 @@ else
   ( cd "$HOME/c/mema" && ./serve ) || echo "after-reboot.linux: mema ./serve returned non-zero"
 fi
 
+# --- TTS server (private 8791, behind the gate) ------------------------------
+# ./serve adds the "tts" pane to this session; it needs the venv and .env that
+# its header describes, so a machine without them just logs the failure.
+if responding http://127.0.0.1:8791/v1/health; then
+  echo "after-reboot.linux: tts already serving, leaving it"
+else
+  echo "after-reboot.linux: starting tts"
+  ( cd "$HOME/c/server/tts" && ./serve ) || echo "after-reboot.linux: tts ./serve returned non-zero"
+fi
+
 # Close whatever else is in the session (resurrected shells, the first pane of
 # a new session), and kill the per-server sessions this replaced.
 tmux list-panes -t "=$SESSION:" -F '#{pane_id} #{pane_title}' |
-  awk '$2!="gate" && $2!="llama" && $2!="mema" {print $1}' |
+  awk '$2!="gate" && $2!="llama" && $2!="mema" && $2!="tts" {print $1}' |
   while read -r pane; do tmux kill-pane -t "$pane"; done
 tmux select-layout -t "=$SESSION:" even-vertical >/dev/null
 for old in llama mema gpu-gate; do

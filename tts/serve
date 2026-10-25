@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# (Re)start the TTS server in the "tts" pane of tmux session "gpu", in place, and
+# return. Runs on the PC (CUDA); the token comes from .env (TTS_AUTH_TOKEN). The
+# session also holds gpu-gate, llama-server and mema (~/c/server/after-reboot.linux.sh
+# builds it at boot). gpu-gate owns the public port 8790 and frees the GPU from
+# the others before a narration, so the server itself listens on loopback 8791.
+#
+# First time on a machine:
+#   uv venv -p 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
+#   echo "TTS_AUTH_TOKEN=$(openssl rand -hex 24)" > .env
+set -euo pipefail
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$APP_DIR"
+SESSION=gpu
+SERVICE=tts
+# shellcheck source=/dev/null
+. "$HOME/c/server/serve-in-place.sh"
+
+PORT=8791
+mkdir -p voices
+
+serve_pane tts "$PORT" \
+  "bash -c 'set -a; . ./.env; set +a; exec .venv/bin/uvicorn server:app --host 127.0.0.1 --port $PORT'" \
+  /v1/health
+serve_attach
