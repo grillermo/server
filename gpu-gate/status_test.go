@@ -29,7 +29,7 @@ func TestStatusReportsHolderAndLastRequest(t *testing.T) {
 
 	f.transcribe()
 	got := status(t, f.llama)
-	for _, want := range []string{"GPU:            free", "Model in VRAM:  mema", "mema  POST /v1/transcribe", "-> 200 OK"} {
+	for _, want := range []string{"GPU:            free", "Gate's record:  mema's model is loaded", "mema  POST /v1/transcribe", "-> 200 OK"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("status after a transcription lacks %q:\n%s", want, got)
 		}

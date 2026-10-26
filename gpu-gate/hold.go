@@ -16,7 +16,7 @@ import (
 func (g *gpu) holdHandler(s side) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case g.serveOwn(w, r):
+		case g.serveOwn(w, r, s):
 			return
 		case r.URL.Path != "/gpu-gate/hold":
 			http.NotFound(w, r)

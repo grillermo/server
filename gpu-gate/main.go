@@ -8,6 +8,10 @@
 // never gated, so probes and discovery keep working no matter which server
 // holds the GPU.
 //
+// The gate's own GET /status (on whisker's port, /gpu-gate/status, since
+// whisker has a /status of its own) tells who holds the GPU, who really holds
+// its memory according to nvidia-smi (see vram.go) and the last GPU request.
+//
 // Holding the lock is not enough on a 12 GB card: an idle server keeps its
 // model resident, and another one then cannot load. So the gate remembers
 // whose model is in VRAM, and when a GPU request comes for another server it
@@ -58,10 +62,11 @@ type gpu struct {
 	swap     chan struct{} // closed when the owner's switch finishes; nil when none runs
 
 	// For /status only.
-	born   time.Time // when the gate started
-	since  time.Time // when the current owner took the GPU
-	latest exchange  // the latest request to take the GPU
-	last   exchange  // the last GPU request to finish
+	born   time.Time  // when the gate started
+	since  time.Time  // when the current owner took the GPU
+	latest exchange   // the latest request to take the GPU
+	last   exchange   // the last GPU request to finish
+	probe  *vramProbe // what is really in VRAM; nil in tests
 }
 
 // acquire reserves the GPU for side, or reports who already holds it. It
@@ -143,6 +148,10 @@ type side struct {
 	// loads. If it fails, the request is refused with evictMsg.
 	evictOther func(context.Context) error
 	evictMsg   string
+
+	// upstreamStatus: the upstream serves its own /status, so the gate's
+	// status page on this port is only at /gpu-gate/status.
+	upstreamStatus bool
 }
 
 func mustProxy(upstream string) *httputil.ReverseProxy {
@@ -163,7 +172,7 @@ func mustProxy(upstream string) *httputil.ReverseProxy {
 
 func (g *gpu) handler(s side) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if g.serveOwn(w, r) {
+		if g.serveOwn(w, r, s) {
 			return
 		}
 		if !s.isGPU(r) {
@@ -320,6 +329,8 @@ func main() {
 		busyMsg:    `{"detail":"GPU not available: another model server (llama, text-to-speech or simple-enhance) is using the GPU. Try again in a moment."}`,
 		evictOther: evictAll(llamaRouter.evict, speech.evict, enhancer.evict),
 		evictMsg:   `{"detail":"GPU not available: could not free the GPU from the other model servers. Try again in a moment."}`,
+		// whisker has its own /status page.
+		upstreamStatus: true,
 	}
 	tts := side{
 		name:       "tts",
@@ -335,6 +346,12 @@ func main() {
 		evictOther: evictAll(llamaRouter.evict, whisker.evict, speech.evict),
 		evictMsg:   `{"error":"GPU not available: could not free the GPU from the other model servers"}`,
 	}
+
+	g.probe = newVRAMProbe(map[string]string{
+		"llama": *llamaUpstream, "mema": *memaUpstream, "tts": *ttsUpstream, "enhance": *enhanceServer,
+	})
+	g.probe.models["llama"] = llamaRouter.resident
+	g.recordResident(context.Background())
 
 	llamaSrv := &http.Server{Addr: *llamaListen, Handler: g.handler(llama)}
 	memaSrv := &http.Server{Addr: *memaListen, Handler: g.handler(mema)}
