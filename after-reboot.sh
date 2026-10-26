@@ -16,6 +16,7 @@ SERVICES=(
     "serve-html-markdown"
     "ebooks"
     "readitsoon"
+    "narrate:app/serve"
     "blog_grillermo_com"
     "file_server"
     "yosubee"
