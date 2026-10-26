@@ -87,6 +87,7 @@ tunnels:
       daisolar-crm.chiq.me:
         service: http://localhost:3070
         caddy: http://localhost:3071
+      compras.chiq.me: http://localhost:4031
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
