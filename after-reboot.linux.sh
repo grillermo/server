@@ -128,6 +128,14 @@ else
   ( cd "$HOME/c/simple-enhance" && ./serve ) || echo "after-reboot.linux: simple-enhance ./serve returned non-zero"
 fi
 
+# --- narrate's Phonon TTS (LAN 8795, CPU only, its own tmux session) ---------
+if responding http://127.0.0.1:8795/v1/health; then
+  echo "after-reboot.linux: narrate-tts already serving, leaving it"
+else
+  echo "after-reboot.linux: starting narrate-tts"
+  ( cd "$HOME/c/narrate/tts" && ./serve ) || echo "after-reboot.linux: narrate-tts ./serve returned non-zero"
+fi
+
 # Close whatever else is in the session (resurrected shells, the first pane of
 # a new session), and kill the per-server sessions this replaced.
 tmux list-panes -t "=$SESSION:" -F '#{pane_id} #{?#{@serve-title},#{@serve-title},#{pane_title}}' |
