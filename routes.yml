@@ -96,3 +96,4 @@ tunnels:
       llm.chiq.me: http://localhost:8080
       mema.chiq.me: http://localhost:8787
       smash.chiq.me: http://localhost:7070
+      tts.chiq.me: http://localhost:8795
