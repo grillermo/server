@@ -12,14 +12,18 @@
 #             available" 503. It also unloads the idle servers' models when
 #             another one needs the GPU (llama's and tts's before a
 #             transcription, and so on). See gpu-gate/main.go. It also
-#             hands simple-enhance (~/c/simple-enhance, started by its own
-#             ./serve) a GPU lease per job on 127.0.0.1:8792.
+#             hands simple-enhance a GPU lease per job on 127.0.0.1:8792.
 #   - llama : llama.cpp router, on private 127.0.0.1:8081
 #   - mema  : Whisker voice-to-text server (CUDA), on private 127.0.0.1:8788,
 #             started by ~/c/mema/serve (which git-sync also runs on new code)
 #   - tts   : text-to-speech server (Qwen3-TTS, CUDA), on private
 #             127.0.0.1:8791, started by ~/c/server/tts/serve. It loads its
 #             model on the first narration, so it takes no VRAM until used.
+#   - enhance: simple-enhance (~/c/simple-enhance), video audio cleanup, on
+#             0.0.0.0:7000. Its models load with the first job, under a
+#             lease from the gate.
+#
+# gpu-gate/serve runs this and then attaches the terminal to the session.
 #
 #   pi   -> 127.0.0.1:8080  (gate) -> 127.0.0.1:8081  llama
 #   phone-> <lan>:8787      (gate) -> 127.0.0.1:8788  mema
@@ -60,7 +64,7 @@ tmux start-server
 if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION" -n main -x 200 -y 60
 fi
-tmux set-option -t "=$SESSION" @serve-layout even-vertical
+tmux set-option -t "=$SESSION:" @serve-layout even-vertical
 tmux set-option -w -t "=$SESSION:" pane-border-status top
 tmux set-option -w -t "=$SESSION:" pane-border-format ' #{pane_title} '
 tmux set-option -w -t "=$SESSION:" allow-set-title off # keep the titles ours
@@ -113,10 +117,25 @@ else
   ( cd "$HOME/c/server/tts" && ./serve ) || echo "after-reboot.linux: tts ./serve returned non-zero"
 fi
 
+# --- simple-enhance (7000; GPU lease from the gate's 8792) --------------------
+# Its models load with the first job, under a lease, so it takes no VRAM while
+# idle; GPU_GATE_URL is set here too so it never loads them at startup. The Go
+# server reads the rest of its settings from its own .env.
+ENHANCE_DIR="$HOME/c/simple-enhance"
+if responding http://127.0.0.1:7000/; then
+  echo "after-reboot.linux: simple-enhance already serving, leaving it"
+elif [ ! -x "$ENHANCE_DIR/.venvs/reuse/bin/python" ] || [ ! -f "$ENHANCE_DIR/.env" ]; then
+  echo "after-reboot.linux: simple-enhance not set up (needs .venvs/reuse and .env), skipping"
+else
+  echo "after-reboot.linux: starting simple-enhance"
+  APP_DIR="$ENHANCE_DIR" SERVICE=simple-enhance start_pane enhance \
+    "env GPU_GATE_URL=http://127.0.0.1:8792 go run ./cmd/server"
+fi
+
 # Close whatever else is in the session (resurrected shells, the first pane of
 # a new session), and kill the per-server sessions this replaced.
-tmux list-panes -t "=$SESSION:" -F '#{pane_id} #{pane_title}' |
-  awk '$2!="gate" && $2!="llama" && $2!="mema" && $2!="tts" {print $1}' |
+tmux list-panes -t "=$SESSION:" -F '#{pane_id} #{?#{@serve-title},#{@serve-title},#{pane_title}}' |
+  awk '$2!="gate" && $2!="llama" && $2!="mema" && $2!="tts" && $2!="enhance" {print $1}' |
   while read -r pane; do tmux kill-pane -t "$pane"; done
 tmux select-layout -t "=$SESSION:" even-vertical >/dev/null
 for old in llama mema gpu-gate; do

@@ -44,10 +44,15 @@ free_port() {
   [ -z "$(port_listeners "$port")" ] || { echo "ERROR: could not free port $port."; return 1; }
 }
 
+# pane_for <title>: the pane start_pane gave that title. It is kept in the
+# pane option @serve-title as well, because the visible title can drift
+# (tmux-resurrect restores old ones), and respawning by a drifted title kills
+# another server. A pane without the option is matched by its title.
 pane_for() {
   tmux has-session -t "=$SESSION" 2>/dev/null || return 0
-  tmux list-panes -t "=$SESSION:" -F '#{pane_title} #{pane_id}' 2>/dev/null |
-    awk -v t="$1" '$1==t{print $2}'
+  tmux list-panes -t "=$SESSION:" -F '#{@serve-title}|#{pane_title}|#{pane_id}' 2>/dev/null |
+    awk -F'|' -v t="$1" '$1==t{tagged=$3} $1=="" && $2==t && !untagged{untagged=$3}
+      END{if (tagged) print tagged; else if (untagged) print untagged}'
 }
 
 pane_dead() {
@@ -75,7 +80,8 @@ start_pane() {
   tmux respawn-pane -k -t "$pid" \
     "cd '$APP_DIR' && export PATH='$PATH' TOP_CPU_SERVICE_TMUX='$SESSION' && exec '$SERVE_WRAPPER' '${SERVICE:-$SESSION}' '$APP_DIR' $cmd"
   tmux select-pane -t "$pid" -T "$title" # respawn-pane resets it on some tmux versions
-  layout=$(tmux show-options -qv -t "=$SESSION" @serve-layout 2>/dev/null)
+  tmux set-option -p -t "$pid" @serve-title "$title"
+  layout=$(tmux show-options -qv -t "=$SESSION:" @serve-layout 2>/dev/null)
   tmux select-layout -t "=$SESSION:" "${layout:-even-horizontal}" >/dev/null
 }
 

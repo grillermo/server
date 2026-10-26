@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Bring up every server that shares the PC's GPU, each in its titled pane of
+# tmux session "gpu" (gate, llama, mema, tts, enhance), and show that session
+# on this terminal: inside tmux it switches this client to it, outside it
+# attaches. A server already answering is left running with its model loaded;
+# only the missing ones start. ~/c/server/after-reboot.linux.sh does the work,
+# the same as at boot.
+set -euo pipefail
+"$HOME/c/server/after-reboot.linux.sh"
+
+SESSION=gpu
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+. "$HOME/c/server/serve-in-place.sh"
+serve_attach
