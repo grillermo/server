@@ -31,6 +31,7 @@ SERVICES=(
     "sota-llms"
     "chat-chiq-me"
     "third-parties/twenty"
+    "personal-assistant/purchases"
 )
 
 # Function to create and configure a tmux session
