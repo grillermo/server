@@ -19,9 +19,9 @@
 #   - tts   : text-to-speech server (Qwen3-TTS, CUDA), on private
 #             127.0.0.1:8791, started by ~/c/server/tts/serve. It loads its
 #             model on the first narration, so it takes no VRAM until used.
-#   - enhance: simple-enhance (~/c/simple-enhance), video audio cleanup, on
-#             0.0.0.0:7000. Its models load with the first job, under a
-#             lease from the gate.
+#   - enhance: simple-enhance, video audio cleanup, on 0.0.0.0:7000, started
+#             by ~/c/simple-enhance/serve. Its models load with the first
+#             job, under a lease from the gate.
 #
 # gpu-gate/serve runs this and then attaches the terminal to the session.
 #
@@ -118,18 +118,14 @@ else
 fi
 
 # --- simple-enhance (7000; GPU lease from the gate's 8792) --------------------
-# Its models load with the first job, under a lease, so it takes no VRAM while
-# idle; GPU_GATE_URL is set here too so it never loads them at startup. The Go
-# server reads the rest of its settings from its own .env.
-ENHANCE_DIR="$HOME/c/simple-enhance"
+# ./serve adds the "enhance" pane to this session; its models load with the
+# first job, under a lease, so it takes no VRAM while idle. It needs the venv
+# and settings file its header describes, so a machine without them just logs it.
 if responding http://127.0.0.1:7000/; then
   echo "after-reboot.linux: simple-enhance already serving, leaving it"
-elif [ ! -x "$ENHANCE_DIR/.venvs/reuse/bin/python" ] || [ ! -f "$ENHANCE_DIR/.env" ]; then
-  echo "after-reboot.linux: simple-enhance not set up (needs .venvs/reuse and .env), skipping"
 else
   echo "after-reboot.linux: starting simple-enhance"
-  APP_DIR="$ENHANCE_DIR" SERVICE=simple-enhance start_pane enhance \
-    "env GPU_GATE_URL=http://127.0.0.1:8792 go run ./cmd/server"
+  ( cd "$HOME/c/simple-enhance" && ./serve ) || echo "after-reboot.linux: simple-enhance ./serve returned non-zero"
 fi
 
 # Close whatever else is in the session (resurrected shells, the first pane of
