@@ -56,6 +56,12 @@ type gpu struct {
 	active   int
 	resident string        // "" until the first switch, so it evicts whatever is there
 	swap     chan struct{} // closed when the owner's switch finishes; nil when none runs
+
+	// For /status only.
+	born   time.Time // when the gate started
+	since  time.Time // when the current owner took the GPU
+	latest exchange  // the latest request to take the GPU
+	last   exchange  // the last GPU request to finish
 }
 
 // acquire reserves the GPU for side, or reports who already holds it. It
@@ -65,6 +71,7 @@ func (g *gpu) acquire(side string) (ok bool, heldBy string) {
 	defer g.mu.Unlock()
 	if g.active == 0 {
 		g.owner = side
+		g.since = time.Now()
 	} else if g.owner != side {
 		return false, g.owner
 	}
@@ -156,28 +163,32 @@ func mustProxy(upstream string) *httputil.ReverseProxy {
 
 func (g *gpu) handler(s side) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Gate itself answers its own health, so a probe never depends on the
-		// upstream being up.
-		if r.URL.Path == "/gpu-gate/health" {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok\n"))
+		if g.serveOwn(w, r) {
 			return
 		}
-		if s.isGPU(r) {
-			ok, heldBy := g.acquire(s.name)
-			if !ok {
-				refuse(w, s.busyMsg)
-				log.Printf("%s request refused: GPU held by %s", s.name, heldBy)
-				return
-			}
-			defer g.release(s.name)
-			if err := g.ready(s.name, s.evictOther); err != nil {
-				refuse(w, s.evictMsg)
-				log.Printf("%s request refused: %v", s.name, err)
-				return
-			}
+		if !s.isGPU(r) {
+			s.proxy.ServeHTTP(w, r)
+			return
 		}
-		s.proxy.ServeHTTP(w, r)
+		start := time.Now()
+		ok, heldBy := g.acquire(s.name)
+		if !ok {
+			refuse(w, s.busyMsg)
+			g.finished(s.name, r, start, http.StatusServiceUnavailable, "GPU held by "+heldBy)
+			log.Printf("%s request refused: GPU held by %s", s.name, heldBy)
+			return
+		}
+		defer g.release(s.name)
+		g.took(s.name, r, start)
+		if err := g.ready(s.name, s.evictOther); err != nil {
+			refuse(w, s.evictMsg)
+			g.finished(s.name, r, start, http.StatusServiceUnavailable, err.Error())
+			log.Printf("%s request refused: %v", s.name, err)
+			return
+		}
+		sw := &statusWriter{ResponseWriter: w}
+		s.proxy.ServeHTTP(sw, r)
+		g.finished(s.name, r, start, sw.code, "")
 	}
 }
 
@@ -242,7 +253,7 @@ func main() {
 	enhanceTokenEnv := flag.String("enhance-token-env", "ENHANCE_AUTH_TOKEN", "env var holding simple-enhance's unload token")
 	flag.Parse()
 
-	g := &gpu{}
+	g := &gpu{born: time.Now()}
 
 	llamaKey := os.Getenv(*llamaKeyEnv)
 	if llamaKey == "" {

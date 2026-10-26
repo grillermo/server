@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 )
 
 // holdHandler serves a side whose GPU work is not one HTTP request but a
@@ -15,9 +16,7 @@ import (
 func (g *gpu) holdHandler(s side) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/gpu-gate/health":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ok\n"))
+		case g.serveOwn(w, r):
 			return
 		case r.URL.Path != "/gpu-gate/hold":
 			http.NotFound(w, r)
@@ -27,15 +26,19 @@ func (g *gpu) holdHandler(s side) http.HandlerFunc {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		start := time.Now()
 		ok, heldBy := g.acquire(s.name)
 		if !ok {
 			refuse(w, s.busyMsg)
+			g.finished(s.name, r, start, http.StatusServiceUnavailable, "GPU held by "+heldBy)
 			log.Printf("%s hold refused: GPU held by %s", s.name, heldBy)
 			return
 		}
 		defer g.release(s.name)
+		g.took(s.name, r, start)
 		if err := g.ready(s.name, s.evictOther); err != nil {
 			refuse(w, s.evictMsg)
+			g.finished(s.name, r, start, http.StatusServiceUnavailable, err.Error())
 			log.Printf("%s hold refused: %v", s.name, err)
 			return
 		}
@@ -47,6 +50,7 @@ func (g *gpu) holdHandler(s side) http.HandlerFunc {
 		}
 		log.Printf("%s holds the GPU", s.name)
 		<-r.Context().Done()
+		g.finished(s.name, r, start, http.StatusOK, "")
 		log.Printf("%s released the GPU", s.name)
 	}
 }
