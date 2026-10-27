@@ -1,3 +1,9 @@
+{
+	# Without a limit, a SIGTERM or reload waits forever on a long-lived connection
+	# and wedges the admin API (and ./reload) behind it.
+	grace_period 10s
+}
+
 # grillermo_com
 :80 {
 	root * /Users/grillermo/c/grillermo_com
