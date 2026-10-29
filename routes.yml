@@ -90,6 +90,7 @@ tunnels:
       compras.chiq.me: http://localhost:4031
       narrate.chiq.me: http://localhost:8794
       articles.chiq.me: http://localhost:8787
+      ventas.chiq.me: http://localhost:8093
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
