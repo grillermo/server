@@ -33,6 +33,7 @@ SERVICES=(
     "chat-chiq-me"
     "third-parties/twenty"
     "compras"
+    "ventas-libres:./server/serve"
 )
 
 # Function to create and configure a tmux session
