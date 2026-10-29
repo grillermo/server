@@ -34,6 +34,7 @@ SERVICES=(
     "third-parties/twenty"
     "compras"
     "ventas-libres:./server/serve"
+    "cal.diy"
 )
 
 # Function to create and configure a tmux session
@@ -41,6 +42,8 @@ setup_tmux_session() {
     local dir_name=${1%%:*}
     # A nested dir (a/b) names its session after the last part.
     local session_name=${dir_name##*/}
+    # tmux renames "a.b" to "a_b" but reads "-t a.b" as a pane target.
+    session_name=${session_name//./_}
     local serve_script=./serve
     [[ $1 == *:* ]] && serve_script=${1#*:}
     
