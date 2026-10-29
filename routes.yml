@@ -91,11 +91,11 @@ tunnels:
       narrate.chiq.me: http://localhost:8794
       articles.chiq.me: http://localhost:8787
       ventas.chiq.me: http://localhost:8093
+      smash.chiq.me: http://localhost:6650
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
       simple-enhance.chiq.me: http://localhost:7000
       llm.chiq.me: http://localhost:8080
       mema.chiq.me: http://localhost:8787
-      smash.chiq.me: http://localhost:7070
       tts.chiq.me: http://localhost:8795
