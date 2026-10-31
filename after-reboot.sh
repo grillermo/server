@@ -36,7 +36,7 @@ SERVICES=(
     "compras"
     "ventas-libres:./server/serve"
     "cal.diy"
-    "server/plannotator-router"
+    "plannotator-router"
 )
 
 # Function to create and configure a tmux session
