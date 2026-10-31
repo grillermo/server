@@ -93,10 +93,6 @@ tunnels:
       ventas.chiq.me: http://localhost:8093
       smash.chiq.me: http://localhost:6650
       daisolar-cotizaciones.grillermo.com: http://localhost:3080
-      review2.chiq.me: http://localhost:19433
-      review3.chiq.me: http://localhost:19434
-      review4.chiq.me: http://localhost:19435
-      review5.chiq.me: http://localhost:19436
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
