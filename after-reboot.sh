@@ -32,6 +32,7 @@ SERVICES=(
     "sota-llms"
     "chat-chiq-me"
     "third-parties/twenty"
+    "daisolar/cotizacion-generator"
     "compras"
     "ventas-libres:./server/serve"
     "cal.diy"
