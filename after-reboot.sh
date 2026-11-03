@@ -33,6 +33,7 @@ SERVICES=(
     "chat-chiq-me"
     "third-parties/twenty"
     "daisolar/cotizacion-generator"
+    "daisolar/bot:./local/serve"
     "compras"
     "ventas-libres:./server/serve"
     "cal.diy"
