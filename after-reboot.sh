@@ -16,7 +16,7 @@ SERVICES=(
     "serve-html-markdown"
     "ebooks"
     "readitsoon"
-    "narrate:app/serve"
+    "narratey:app/serve"
     "blog_grillermo_com"
     "file_server"
     "yosubee"
@@ -33,10 +33,11 @@ SERVICES=(
     "chat-chiq-me"
     "third-parties/twenty"
     "daisolar/cotizacion-generator"
-    "daisolar/bot:./local/serve"
+    "daisolar/bot:./fake-daisolar-bot/serve"
     "compras"
     "ventas-libres:./server/serve"
     "cal.diy"
+    "my-articles"
     "plannotator-router"
 )
 
