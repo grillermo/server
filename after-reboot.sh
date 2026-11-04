@@ -62,10 +62,9 @@ setup_tmux_session() {
     # --- PANE 1: The Log Tail (Left Side) ---
     tmux send-keys -t "$session_name" "cd $full_path" C-m
     # ./serve sources serve-in-place.sh, which starts the server in its own
-    # titled pane through top-cpu-service-wrapper and returns, leaving this
-    # pane an ordinary shell. Services whose ./serve doesn't source
-    # serve-in-place.sh yet run in the foreground here, unwrapped, until
-    # converted.
+    # titled pane of this session and returns, leaving this pane an ordinary
+    # shell. Services whose ./serve doesn't source serve-in-place.sh yet run
+    # in the foreground here until converted (the serve-script skill).
     tmux send-keys -t "$session_name" "$serve_script" C-m
     
     # --- PANE 2: The Code Editor (Right Side) ---

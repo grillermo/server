@@ -4,13 +4,15 @@
 #
 #   SESSION=rulinky APP_DIR=$(cd "$(dirname "$0")" && pwd)
 #   . ~/c/server/serve-in-place.sh
+#   serve_require_clean_main          # optional: refuse half-done checkouts
+#   serve_load_env                    # optional: .env for the script and panes
 #   serve_pane web 3002 "env RAILS_ENV=production bin/rails server -p 3002" /
 #   serve_attach
 #
 # Why in place: git-sync runs ./activate -> ./serve after landing new code,
 # with no tty. A foreground server would start a second copy beside the one
-# in tmux. Pane commands go through top-cpu-service-wrapper, as
-# after-reboot.sh's do, so monitord still attributes the server to its service.
+# in tmux. The first run creates the session; every later run restarts each
+# titled pane inside it and never creates, kills or switches to a session.
 
 : "${SESSION:?set SESSION before sourcing serve-in-place.sh}"
 : "${APP_DIR:?set APP_DIR before sourcing serve-in-place.sh}"
@@ -18,7 +20,38 @@
 # No login shell when git-sync runs us; tmux panes inherit this PATH below.
 export PATH="$HOME/.rbenv/shims:$HOME/Library/pnpm:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-SERVE_WRAPPER="$HOME/c/server/top-cpu-service-wrapper"
+# Set by serve_load_env; each pane command sources it again, because a pane
+# gets the tmux server's environment, not this script's.
+SERVE_ENV_FILE=""
+
+# serve_require_clean_main: deploy only committed work. Refuses when the
+# checkout is not on main or tracked files have uncommitted changes.
+# Untracked files (logs, .env, scratch) don't count.
+serve_require_clean_main() {
+  local branch
+  branch=$(git -C "$APP_DIR" symbolic-ref --short -q HEAD || echo "(detached)")
+  if [ "$branch" != main ]; then
+    echo "ERROR: $APP_DIR is on '$branch', not main. Not deploying."
+    exit 1
+  fi
+  if [ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]; then
+    echo "ERROR: uncommitted changes in $APP_DIR. Commit or stash them; not deploying:"
+    git -C "$APP_DIR" status --short --untracked-files=no
+    exit 1
+  fi
+}
+
+# serve_load_env [file]: export the dotenv file (default .env) into this
+# script, and have every pane started after this source it too.
+serve_load_env() {
+  local file="$APP_DIR/${1:-.env}"
+  [ -f "$file" ] || return 0
+  set -a
+  # shellcheck source=/dev/null
+  . "$file"
+  set +a
+  SERVE_ENV_FILE="$file"
+}
 
 port_listeners() {
   lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null || true
@@ -59,13 +92,11 @@ pane_dead() {
   [ "$(tmux display-message -p -t "$1" '#{pane_dead}' 2>/dev/null)" = "1" ]
 }
 
-# start_pane <title> <argv...>: respawn the titled pane running argv through
-# the wrapper; remain-on-exit keeps a pane that crashed on boot, with output.
-# SERVICE (default $SESSION) is the name monitord attributes the pane to, for a
-# session that holds several services. A session's @serve-layout option, when
-# set, overrides the even-horizontal layout.
+# start_pane <title> <command>: respawn the titled pane running the command;
+# remain-on-exit keeps a pane that crashed on boot, with output. A session's
+# @serve-layout option, when set, overrides the even-horizontal layout.
 start_pane() {
-  local title="$1" cmd="$2" pid layout
+  local title="$1" cmd="$2" pid layout env_load=""
   pid=$(pane_for "$title")
   if [ -z "$pid" ]; then
     if tmux has-session -t "=$SESSION" 2>/dev/null; then
@@ -76,9 +107,9 @@ start_pane() {
     fi
     tmux select-pane -t "$pid" -T "$title"
   fi
+  [ -z "$SERVE_ENV_FILE" ] || env_load="set -a && . '$SERVE_ENV_FILE' && set +a && "
   tmux set-option -t "=$SESSION:" remain-on-exit on >/dev/null
-  tmux respawn-pane -k -t "$pid" \
-    "cd '$APP_DIR' && export PATH='$PATH' TOP_CPU_SERVICE_TMUX='$SESSION' && exec '$SERVE_WRAPPER' '${SERVICE:-$SESSION}' '$APP_DIR' $cmd"
+  tmux respawn-pane -k -t "$pid" "cd '$APP_DIR' && export PATH='$PATH' && ${env_load}exec $cmd"
   tmux select-pane -t "$pid" -T "$title" # respawn-pane resets it on some tmux versions
   tmux set-option -p -t "$pid" @serve-title "$title"
   layout=$(tmux show-options -qv -t "=$SESSION:" @serve-layout 2>/dev/null)
@@ -117,10 +148,24 @@ wait_up() {
   return 1
 }
 
+# park_pane <title>: swap the pane's server for a placeholder before the port
+# is freed. Killing the server in place would close the pane (tmux.conf's
+# pane-died hook closes panes stopped on purpose), and with it a session that
+# has no other pane, so the restart would create a new session. respawn-pane
+# keeps the pane; free_port then stops anything still on the port (Puma
+# ignores the SIGHUP respawn-pane sends).
+park_pane() {
+  local pid
+  pid=$(pane_for "$1")
+  [ -n "$pid" ] || return 0
+  tmux respawn-pane -k -t "$pid" "sleep 86400"
+}
+
 # serve_pane <title> <port> <command> [<health path>]
 serve_pane() {
   local title="$1" port="$2" cmd="$3" path="${4:-/}"
   echo "==> (Re)starting $title (port $port)"
+  park_pane "$title"
   free_port "$port" || return 1
   start_pane "$title" "$cmd"
   wait_up "$title" "$port" "$path"
@@ -132,13 +177,52 @@ serve_aux() {
   start_pane "$1" "$2"
 }
 
-# Attach only when a human is watching; git-sync has no tty.
-serve_attach() {
-  if [ -n "${TMUX:-}" ] && [ -t 1 ]; then
-    tmux switch-client -t "=$SESSION"
-  elif [ -t 1 ]; then
-    tmux attach-session -t "=$SESSION"
+# serve_stop <title> [<seconds>]: stop a pane's process gracefully (SIGTERM,
+# so Puma finishes requests and Solid Queue its jobs) and let the pane close;
+# kill the pane if it is still there after the timeout (default 60s). Used to
+# retire the old slot of a blue/green deploy.
+serve_stop() {
+  local title="$1" timeout="${2:-60}" pid
+  pid=$(pane_for "$title")
+  [ -n "$pid" ] || return 0
+  echo "==> Stopping $title"
+  kill -TERM "$(tmux display-message -p -t "$pid" '#{pane_pid}')" 2>/dev/null || true
+  for _ in $(seq 1 "$timeout"); do
+    [ -n "$(pane_for "$title")" ] || return 0
+    pane_dead "$pid" && break
+    sleep 1
+  done
+  tmux kill-pane -t "$pid" 2>/dev/null || true
+}
+
+# serve_record_deploy: append "<time> <commit>" to log/deploys.log, so a bad
+# deploy can be traced to the commits to revert on main.
+serve_record_deploy() {
+  mkdir -p "$APP_DIR/log"
+  echo "$(date '+%Y-%m-%dT%H:%M:%S%z') $(git -C "$APP_DIR" rev-parse --short HEAD)" >>"$APP_DIR/log/deploys.log"
+}
+
+# serve_lan_url <port>: http://<this machine's LAN IP>:<port>, or nothing.
+serve_lan_url() {
+  local ip
+  ip=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || true)
+  [ -z "$ip" ] || echo "http://$ip:$1"
+}
+
+# serve_check_public <url>: warn, never fail, when the public URL is down.
+serve_check_public() {
+  local code
+  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$1" || true)
+  if [ "$code" != 000 ] && [ "$code" -lt 500 ]; then
+    echo "==> $1 is up (HTTP $code)"
   else
-    echo "==> No TTY; not attaching. Run: tmux attach -t $SESSION"
+    echo "WARNING: $1 answered $code. The app is up locally; check the tunnel or DNS."
   fi
+}
+
+# Never attach or switch-client: ./serve runs from Claude's tmux pane,
+# git-sync and by hand, and in all of them the caller's terminal must stay
+# where it is. Watch the session from another terminal instead.
+serve_attach() {
+  echo "==> Session '$SESSION' updated. Watch it with: tmux attach -t $SESSION"
 }
