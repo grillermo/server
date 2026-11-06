@@ -40,6 +40,7 @@ SERVICES=(
     "my-articles"
     "plannotator-router"
     "bank-app-parser"
+    "third-parties/claudecodeui"
 )
 
 # Function to create and configure a tmux session
