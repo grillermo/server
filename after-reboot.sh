@@ -39,6 +39,7 @@ SERVICES=(
     "cal.diy"
     "my-articles"
     "plannotator-router"
+    "bank-app-parser"
 )
 
 # Function to create and configure a tmux session
