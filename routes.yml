@@ -95,6 +95,7 @@ tunnels:
       daisolar-bot.chiq.me: http://127.0.0.1:4311
       narratey.chiq.me: http://localhost:8794
       claude.chiq.me: http://localhost:3040
+      hidpad.chiq.me: http://localhost:19481
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
