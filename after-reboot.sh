@@ -65,14 +65,12 @@ setup_tmux_session() {
     # --- PANE 1: The Log Tail (Left Side) ---
     tmux send-keys -t "$session_name" "cd $full_path" C-m
     # ./serve sources serve-in-place.sh, which starts the server in its own
-    # titled pane of this session and returns, leaving this pane an ordinary
-    # shell. Services whose ./serve doesn't source serve-in-place.sh yet run
-    # in the foreground here until converted (the serve-script skill).
-    tmux send-keys -t "$session_name" "$serve_script" C-m
-    
-    # --- PANE 2: The Code Editor (Right Side) ---
-    tmux split-window -h -t "$session_name" -e ZSH_UNATTENDED=1
-    tmux send-keys -t "$session_name" "cd $full_path" C-m
+    # titled pane of this session and returns; this launcher pane then exits
+    # to save RAM, or stays open showing the error if ./serve failed. Services
+    # whose ./serve doesn't source serve-in-place.sh yet run in the foreground
+    # here until converted (the serve-script skill).
+    tmux send-keys -t "$session_name" "$serve_script && exit" C-m
+
     tmux set-environment -u -t "$session_name" ZSH_UNATTENDED
 }
 
