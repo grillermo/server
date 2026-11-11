@@ -276,9 +276,34 @@
 	# the QA checklist. Rails' static file server would hand them out too, so
 	# refuse them here. A handle (not a bare respond) because Caddy orders every
 	# handle before respond, and the catch-all proxy below would answer first.
-	@private path /vite-ssr/* /vite-dev/* /vite-test/* /e2e-check.html
+	# /vite/.vite/ holds the build manifests, which map every manual page to its
+	# chunk; Rails reads them from disk, the browser never needs them.
+	@private path /vite-ssr/* /vite-dev/* /vite-test/* /vite/.vite/* /e2e-check.html
 	handle @private {
 		respond "Not Found" 404
+	}
+
+	# The paid manual's build output: every manual page is a JSX component, so
+	# its full text lives in a JS chunk, and vite.config.ts writes those chunks
+	# and the manual's images under public/vite/assets/m/. Each request first
+	# asks Rails (ManualAssetAuthsController, which forward_auth sends the
+	# browser's own Cookie header) whether this reader owns the manual; only a
+	# 2xx goes on to the file, and a 401/403 goes back to the browser as is.
+	# Never cacheable by Cloudflare or a shared cache — the Cloudflare cache rule
+	# bypassing /vite/assets/m/* is the other half of this.
+	# Caddy sorts handle blocks by path specificity, so this longer path wins
+	# over the general /vite/* below.
+	handle /vite/assets/m/* {
+		forward_auth localhost:4021 localhost:4022 {
+			uri /manual-asset-auth
+			lb_policy round_robin
+			fail_duration 5s
+			lb_try_duration 8s
+			header_up X-Real-IP {remote_host}
+		}
+		root * /Users/grillermo/c/comunidad-antesis/public
+		header Cache-Control "private, no-store"
+		file_server
 	}
 
 	# Content-hashed Vite build assets (…-BoY-d8R4.webp) — serve straight from
@@ -327,9 +352,22 @@
 	encode zstd gzip
 
 	# Same as :4020 — keep build output and internal pages private.
-	@private path /vite-ssr/* /vite-dev/* /vite-test/* /e2e-check.html
+	@private path /vite-ssr/* /vite-dev/* /vite-test/* /vite/.vite/* /e2e-check.html
 	handle @private {
 		respond "Not Found" 404
+	}
+
+	# Same as :4020 — the manual's chunks and images only for its owners. A
+	# checkout older than the assets/m/ split never writes there, so this is
+	# inert until the staging code has both halves (vite.config.ts + endpoint).
+	handle /vite/assets/m/* {
+		forward_auth localhost:4026 {
+			uri /manual-asset-auth
+			header_up X-Real-IP {remote_host}
+		}
+		root * /Users/grillermo/c/comunidad-antesis-staging/public
+		header Cache-Control "private, no-store"
+		file_server
 	}
 
 	handle /vite/* {
