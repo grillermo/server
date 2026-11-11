@@ -6,8 +6,19 @@
 
 # grillermo_com
 :80 {
-	root * /Users/grillermo/c/grillermo_com
-	file_server
+	# WebFinger for Tailscale custom OIDC: points hola@grillermo.com at the
+	# Pocket ID issuer (~/c/pocket-id, id.grillermo.com). Tailscale reads it
+	# only at signup or when switching identity providers.
+	handle /.well-known/webfinger {
+		header Content-Type application/jrd+json
+		header Access-Control-Allow-Origin *
+		respond `{"subject":"acct:hola@grillermo.com","links":[{"rel":"http://openid.net/specs/connect/1.0/issuer","href":"https://id.grillermo.com"}]}` 200
+	}
+
+	handle {
+		root * /Users/grillermo/c/grillermo_com
+		file_server
+	}
 }
 
 # staging_grillermo_com — the Cloudflare tunnel for staging.grillermo.com points at :6633.

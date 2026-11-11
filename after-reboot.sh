@@ -41,6 +41,7 @@ SERVICES=(
     "plannotator-router"
     "bank-app-parser"
     "third-parties/claudecodeui"
+    "pocket-id"
 )
 
 # Function to create and configure a tmux session

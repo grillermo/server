@@ -96,6 +96,7 @@ tunnels:
       daisolar-crm.grillermo.com:
         service: http://localhost:3070
         caddy: http://localhost:3071
+      id.grillermo.com: http://localhost:1411
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
