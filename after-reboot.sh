@@ -42,6 +42,7 @@ SERVICES=(
     "plannotator-router"
     "bank-app-parser"
     "third-parties/claudecodeui"
+    "music-upkeep"
     "pocket-id"
 )
 
