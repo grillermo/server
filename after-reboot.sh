@@ -15,6 +15,7 @@ SERVICES=(
     "labs"
     "serve-html-markdown"
     "ebooks"
+    "readability"
     "readitsoon"
     "narratey:app/serve"
     "blog_grillermo_com"
