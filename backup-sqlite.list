@@ -1,0 +1,35 @@
+# SQLite databases backed up nightly by backup-databases. Paths are relative to ~/c.
+# A line starting with ! marks a file deliberately NOT backed up (globs allowed), so the
+# "unlisted SQLite in a live project" warning stays quiet about it.
+
+awh/errors.sqlite3
+chat-chiq-me/data/webui.db
+chat-chiq-me/data/vector_db/chroma.sqlite3
+compras/data/purchases.db
+daisolar/cotizacion-generator/storage/quotes.db
+daisolar/bot/fake-daisolar-bot/data/d1.sqlite
+ebooks/metadata.db
+music-upkeep/data/navidrome.db
+my-articles/articles/articles.db
+my-articles/articles/full-text-search.db
+my-articles/articles/metadata.db
+narratey/app/data/narratey.db
+ntfyllermo/data/user.db
+ntfyllermo/data/webpush.db
+ntfyllermo/data/cache.db
+patatatube/data/watch_later.sqlite
+pocket-id/data/pocket-id.db
+qotnews/apiserver/data/qotnews.sqlite
+songfind/library.db
+songfind/lyrics.db
+songfind/sessions.db
+third-parties/claudecodeui/database/auth.db
+ventas-libres/data/ventas.db
+
+# Not backed up
+!readitsoon/storage/*.sqlite3      # dev/test only; production is in Postgres
+!sota-llms/codex/*                 # headless CLI state, not app data
+!japanese-walking/ios/*            # Xcode build artifacts
+!my-claude-usage/ios/*
+!songfind/ios/*
+!my-machines-monitor/*/.build/*

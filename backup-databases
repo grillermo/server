@@ -1,0 +1,124 @@
+#!/bin/bash
+# Nightly backup of every live database on the macmini, run by launchd (db-backup.plist) at 03:00.
+#
+#   Postgres: globals plus one `pg_dump -Fc` per database, skipping templates and *_test DBs.
+#   SQLite:   every file listed in backup-sqlite.list, copied with sqlite3 .backup (WAL-safe)
+#             and checked with PRAGMA quick_check.
+#   MariaDB:  nothing live uses it (only the abandoned kimai DB), so it is not backed up.
+#
+# The archive is kept in ~/backups/databases (last 3) and uploaded to S3, but only after a probe
+# proves the prefix is not anonymously readable. Any failure sends an ntfy notification.
+#
+#   ./backup-databases            full run
+#   NO_UPLOAD=1 ./backup-databases  skip S3, keep the local archive
+set -eEuo pipefail
+export PATH="/opt/homebrew/opt/postgresql@18/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PROJECTS="$HOME/c"
+SQLITE_LIST="$HERE/backup-sqlite.list"
+LOCAL_DIR="$HOME/backups/databases"
+KEEP_LOCAL=3
+BUCKET="guillermo-public"
+PREFIX="mac-mini-postgres-databases"
+PG_USER="grillermo"
+NTFY="$HOME/c/agents-configs/bin/ntfy_machines.sh"
+
+notify() { "$NTFY" "$1" "$2" "${3:-default}" >/dev/null 2>&1 || echo "ntfy failed" >&2; }
+fail() {
+  trap - ERR
+  echo "$(date '+%F %T') FAILED: $*" >&2
+  notify "macmini DB backup FAILED" "$*" high
+  exit 1
+}
+trap 'fail "line $LINENO: $BASH_COMMAND"' ERR
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+stamp="$(date +%Y-%m-%d)"
+echo "$(date '+%F %T') backup starting"
+
+# --- Postgres ---------------------------------------------------------------------------------
+mkdir "$work/postgres"
+pg_dumpall -U "$PG_USER" --globals-only >"$work/postgres/_globals.sql"
+dbs="$(psql -U "$PG_USER" -d postgres -Atc \
+  "select datname from pg_database
+    where not datistemplate and datname <> 'postgres'
+      and datname !~ '_test([_-][0-9]+)?$'
+    order by 1")"
+for db in $dbs; do
+  pg_dump -U "$PG_USER" -Fc -f "$work/postgres/$db.dump" "$db"
+done
+echo "postgres: $(echo "$dbs" | wc -l | tr -d ' ') databases"
+
+# --- SQLite -----------------------------------------------------------------------------------
+mkdir "$work/sqlite"
+listed=() ignored=()
+while IFS= read -r line; do
+  line="${line%%#*}"; line="$(echo "$line" | xargs)"
+  [ -z "$line" ] && continue
+  if [ "${line:0:1}" = "!" ]; then ignored+=("${line:1}"); else listed+=("$line"); fi
+done <"$SQLITE_LIST"
+
+for rel in "${listed[@]}"; do
+  src="$PROJECTS/$rel"
+  [ -f "$src" ] || fail "SQLite file in backup-sqlite.list is missing: $rel"
+  dst="$work/sqlite/${rel//\//__}"
+  sqlite3 "$src" ".timeout 30000" ".backup '$dst'"
+  check="$(sqlite3 "$dst" 'pragma quick_check')"
+  [ "$check" = "ok" ] || fail "SQLite copy of $rel failed quick_check: $check"
+done
+echo "sqlite: ${#listed[@]} files"
+
+# Warn (without failing) about SQLite files in live tmux projects that the list doesn't mention,
+# so a new project's database doesn't go unnoticed.
+unlisted=()
+roots="$(tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null \
+  | sed -nE "s#^($PROJECTS/(third-parties/)?[^/]+).*#\1#p" | sort -u)"
+for root in $roots; do
+  while IFS= read -r f; do
+    rel="${f#"$PROJECTS"/}" known=0
+    for p in "${listed[@]}" ${ignored[@]+"${ignored[@]}"}; do
+      # shellcheck disable=SC2053  # $p is a glob on purpose
+      [[ "$rel" == $p ]] && { known=1; break; }
+    done
+    [ "$known" = 0 ] && unlisted+=("$rel")
+  done < <(find "$root" -maxdepth 5 \
+    \( -name node_modules -o -name .git -o -name vendor -o -name .venv -o -name venv \
+       -o -name .build -o -name build -o -name tmp -o -name test -o -name .worktrees \
+       -o -name .code-review-graph -o -name .tokensave -o -name .nx -o -name .gemini -o -name .claude \) -prune \
+    -o -type f \( -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \) -size +0 -print 2>/dev/null)
+done
+if [ "${#unlisted[@]}" -gt 0 ]; then
+  echo "WARNING: SQLite files in live projects not in backup-sqlite.list: ${unlisted[*]}"
+  notify "macmini DB backup: unlisted SQLite" "Add to server/backup-sqlite.list (or ! to skip): ${unlisted[*]}"
+fi
+
+# --- Archive ----------------------------------------------------------------------------------
+mkdir -p "$LOCAL_DIR"
+archive="$LOCAL_DIR/macmini-dbs-$stamp.tar.gz"
+tar -czf "$archive.partial" -C "$work" postgres sqlite
+mv "$archive.partial" "$archive"
+size="$(stat -f %z "$archive")"
+echo "archive: $archive ($((size / 1024 / 1024)) MB)"
+# shellcheck disable=SC2012  # names are fixed-format, ls -t is fine
+ls -1t "$LOCAL_DIR"/macmini-dbs-*.tar.gz | tail -n +$((KEEP_LOCAL + 1)) | while IFS= read -r old; do rm -f "$old"; done
+
+# --- Upload -----------------------------------------------------------------------------------
+if [ "${NO_UPLOAD:-}" = 1 ]; then
+  echo "NO_UPLOAD=1, skipping S3"
+  exit 0
+fi
+
+# Refuse to upload into a prefix anyone can read.
+probe="$PREFIX/.public-probe"
+echo "probe" | aws s3 cp - "s3://$BUCKET/$probe" --only-show-errors
+code="$(curl -s -o /dev/null -w '%{http_code}' "https://$BUCKET.s3.amazonaws.com/$probe")"
+aws s3 rm "s3://$BUCKET/$probe" --only-show-errors
+[ "$code" = 403 ] || fail "s3://$BUCKET/$PREFIX/ is publicly readable (HTTP $code), not uploading. Local copy kept at $archive"
+
+key="$PREFIX/$(basename "$archive")"
+aws s3 cp "$archive" "s3://$BUCKET/$key" --only-show-errors
+remote_size="$(aws s3api head-object --bucket "$BUCKET" --key "$key" --query ContentLength --output text)"
+[ "$remote_size" = "$size" ] || fail "S3 size mismatch for $key: local $size, remote $remote_size"
+echo "$(date '+%F %T') uploaded s3://$BUCKET/$key"

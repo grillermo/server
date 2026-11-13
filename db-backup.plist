@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Install: cp db-backup.plist ~/Library/LaunchAgents/com.grillermo.db-backup.plist
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.grillermo.db-backup.plist -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.grillermo.db-backup</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/grillermo/c/server/backup-databases</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/grillermo/c/server/logs/db-backup.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/grillermo/c/server/logs/db-backup.log</string>
+</dict>
+</plist>
