@@ -74,7 +74,7 @@ echo "sqlite: ${#listed[@]} files"
 # so a new project's database doesn't go unnoticed.
 unlisted=()
 roots="$(tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null \
-  | sed -nE "s#^($PROJECTS/(third-parties/)?[^/]+).*#\1#p" | sort -u)"
+  | sed -nE "s#^($PROJECTS/[^/]+).*#\1#p" | sort -u)"
 for root in $roots; do
   while IFS= read -r f; do
     rel="${f#"$PROJECTS"/}" known=0

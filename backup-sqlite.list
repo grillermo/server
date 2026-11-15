@@ -23,7 +23,7 @@ qotnews/apiserver/data/qotnews.sqlite
 songfind/library.db
 songfind/lyrics.db
 songfind/sessions.db
-third-parties/claudecodeui/database/auth.db
+claudecodeui/database/auth.db
 ventas-libres/data/ventas.db
 
 # Not backed up

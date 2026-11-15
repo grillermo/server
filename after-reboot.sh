@@ -32,7 +32,7 @@ SERVICES=(
     "qotnews"
     "sota-llms"
     "chat-chiq-me"
-    "third-parties/twenty"
+    "twenty"
     "daisolar/cotizacion-generator"
     "daisolar/bot:./fake-daisolar-bot/serve"
     "compras"
@@ -41,7 +41,7 @@ SERVICES=(
     "my-articles"
     "plannotator-router"
     "bank-app-parser"
-    "third-parties/claudecodeui"
+    "claudecodeui"
     "music-upkeep"
     "pocket-id"
 )
