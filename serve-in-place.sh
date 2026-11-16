@@ -58,7 +58,17 @@ port_listeners() {
 }
 
 # The previous occupant of our port is always ours (including a foreground
-# run of an old ./serve), so reclaim it before respawning the pane.
+# run of an old ./serve), so reclaim it before respawning the pane. Wait for
+# the processes themselves to exit, not just the port: Puma closes its
+# listener first and keeps running while it drains (Solid Queue in Puma can
+# take a while), and a server started meanwhile finds the old pidfile alive
+# and quits with "A server is already running".
+pids_alive() {
+  local p
+  for p in $1; do kill -0 "$p" 2>/dev/null && return 0; done
+  return 1
+}
+
 free_port() {
   local port="$1" pids
   pids=$(port_listeners "$port")
@@ -66,13 +76,13 @@ free_port() {
   echo "==> Port $port held by PID(s): $(echo "$pids" | tr '\n' ' ')- stopping"
   # shellcheck disable=SC2086
   kill $pids 2>/dev/null || true
-  for _ in $(seq 1 20); do
+  for _ in $(seq 1 60); do
     sleep 0.5
-    [ -n "$(port_listeners "$port")" ] || return 0
+    pids_alive "$pids" || [ -n "$(port_listeners "$port")" ] || return 0
   done
-  pids=$(port_listeners "$port")
-  # shellcheck disable=SC2086
-  [ -z "$pids" ] || kill -9 $pids 2>/dev/null || true
+  echo "==> PID(s) still running after 30s - killing"
+  # shellcheck disable=SC2086,SC2046
+  kill -9 $pids $(port_listeners "$port") 2>/dev/null || true
   sleep 1
   [ -z "$(port_listeners "$port")" ] || { echo "ERROR: could not free port $port."; return 1; }
 }
@@ -83,7 +93,7 @@ free_port() {
 # another server. A pane without the option is matched by its title.
 pane_for() {
   tmux has-session -t "=$SESSION" 2>/dev/null || return 0
-  tmux list-panes -t "=$SESSION:" -F '#{@serve-title}|#{pane_title}|#{pane_id}' 2>/dev/null |
+  tmux list-panes -s -t "=$SESSION" -F '#{@serve-title}|#{pane_title}|#{pane_id}' 2>/dev/null |
     awk -F'|' -v t="$1" '$1==t{tagged=$3} $1=="" && $2==t && !untagged{untagged=$3}
       END{if (tagged) print tagged; else if (untagged) print untagged}'
 }
@@ -92,20 +102,57 @@ pane_dead() {
   [ "$(tmux display-message -p -t "$1" '#{pane_dead}' 2>/dev/null)" = "1" ]
 }
 
+# caller_window: the window of the pane running this script, when that pane
+# is inside $SESSION (someone ran ./serve from a shell in the session, e.g.
+# the after-reboot launcher or an interactive session that shares the name).
+caller_window() {
+  [ -n "${TMUX_PANE:-}" ] || return 0
+  [ "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)" = "$SESSION" ] || return 0
+  tmux display-message -p -t "$TMUX_PANE" '#{window_id}'
+}
+
+# serve_window <caller window>: a window already holding server panes, other
+# than the caller's.
+serve_window() {
+  tmux list-panes -s -t "=$SESSION" -F '#{@serve-title}|#{window_id}' 2>/dev/null |
+    awk -F'|' -v c="$1" '$1!="" && $2!=c {print $2; exit}'
+}
+
 # start_pane <title> <command>: respawn the titled pane running the command;
 # remain-on-exit keeps a pane that crashed on boot, with output. A session's
 # @serve-layout option, when set, overrides the even-horizontal layout.
+# Never takes over the caller's view: a server pane never lands in (or stays
+# in) the caller's window, and the pane that was active stays active.
 start_pane() {
-  local title="$1" cmd="$2" pid layout env_load=""
+  local title="$1" cmd="$2" pid layout env_load="" caller win prev=""
+  caller=$(caller_window)
+  if tmux has-session -t "=$SESSION" 2>/dev/null; then
+    prev=$(tmux display-message -p -t "=$SESSION:" '#{pane_id}')
+  fi
   pid=$(pane_for "$title")
+  if [ -n "$pid" ] && [ -n "$caller" ] &&
+    [ "$(tmux display-message -p -t "$pid" '#{window_id}')" = "$caller" ]; then
+    win=$(serve_window "$caller")
+    if [ -n "$win" ]; then
+      tmux join-pane -d -s "$pid" -t "$win"
+    else
+      tmux break-pane -d -s "$pid" -n serve
+    fi
+  fi
   if [ -z "$pid" ]; then
     if tmux has-session -t "=$SESSION" 2>/dev/null; then
-      pid=$(tmux split-window -P -F '#{pane_id}' -t "=$SESSION:")
+      win=$(serve_window "$caller")
+      if [ -n "$win" ]; then
+        pid=$(tmux split-window -d -P -F '#{pane_id}' -t "$win")
+      elif [ -n "$caller" ]; then
+        pid=$(tmux new-window -d -n serve -P -F '#{pane_id}' -t "=$SESSION:")
+      else
+        pid=$(tmux split-window -d -P -F '#{pane_id}' -t "=$SESSION:")
+      fi
     else
       tmux new-session -d -s "$SESSION" -n main -x 200 -y 50
       pid=$(tmux list-panes -t "=$SESSION:" -F '#{pane_id}' | head -1)
     fi
-    tmux select-pane -t "$pid" -T "$title"
   fi
   [ -z "$SERVE_ENV_FILE" ] || env_load="set -a && . '$SERVE_ENV_FILE' && set +a && "
   tmux set-option -t "=$SESSION:" remain-on-exit on >/dev/null
@@ -113,7 +160,12 @@ start_pane() {
   tmux select-pane -t "$pid" -T "$title" # respawn-pane resets it on some tmux versions
   tmux set-option -p -t "$pid" @serve-title "$title"
   layout=$(tmux show-options -qv -t "=$SESSION:" @serve-layout 2>/dev/null)
-  tmux select-layout -t "=$SESSION:" "${layout:-even-horizontal}" >/dev/null
+  tmux select-layout -t "$pid" "${layout:-even-horizontal}" >/dev/null
+  # select-pane -T also focuses the pane; hand focus back.
+  if [ -n "$prev" ] && [ "$prev" != "$pid" ]; then
+    tmux select-window -t "$prev" 2>/dev/null || true
+    tmux select-pane -t "$prev" 2>/dev/null || true
+  fi
 }
 
 dump_pane() {
