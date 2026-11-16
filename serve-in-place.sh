@@ -69,22 +69,48 @@ pids_alive() {
   return 1
 }
 
+# pidfile_pids: the PID in the app's server pidfile, when it is still alive.
+# The port alone is not enough to find the old server: by the time we look,
+# a Puma killed by park_pane has often already closed its listener while the
+# process lives on (draining, Solid Queue in Puma), and a server started then
+# finds that pidfile alive and quits with "A server is already running". An
+# app whose pidfile is elsewhere sets SERVE_PIDFILE (relative to APP_DIR).
+pidfile_pids() {
+  local f="$APP_DIR/${SERVE_PIDFILE:-tmp/pids/server.pid}" pid
+  [ -f "$f" ] || return 0
+  pid=$(tr -dc '0-9' <"$f")
+  [ -n "$pid" ] || return 0
+  kill -0 "$pid" 2>/dev/null && echo "$pid"
+  return 0
+}
+
+# port_owners <port>: everything that must die before the new server starts -
+# whoever listens on the port, plus the pidfile's owner.
+port_owners() {
+  {
+    port_listeners "$1"
+    pidfile_pids
+  } | awk 'NF' | sort -u
+}
+
 free_port() {
   local port="$1" pids
-  pids=$(port_listeners "$port")
+  pids=$(port_owners "$port")
   [ -n "$pids" ] || return 0
   echo "==> Port $port held by PID(s): $(echo "$pids" | tr '\n' ' ')- stopping"
   # shellcheck disable=SC2086
   kill $pids 2>/dev/null || true
   for _ in $(seq 1 60); do
     sleep 0.5
-    pids_alive "$pids" || [ -n "$(port_listeners "$port")" ] || return 0
+    if ! pids_alive "$pids" && [ -z "$(port_owners "$port")" ]; then
+      return 0
+    fi
   done
   echo "==> PID(s) still running after 30s - killing"
   # shellcheck disable=SC2086,SC2046
-  kill -9 $pids $(port_listeners "$port") 2>/dev/null || true
+  kill -9 $pids $(port_owners "$port") 2>/dev/null || true
   sleep 1
-  [ -z "$(port_listeners "$port")" ] || { echo "ERROR: could not free port $port."; return 1; }
+  [ -z "$(port_owners "$port")" ] || { echo "ERROR: could not free port $port."; return 1; }
 }
 
 # pane_for <title>: the pane start_pane gave that title. It is kept in the
@@ -100,6 +126,13 @@ pane_for() {
 
 pane_dead() {
   [ "$(tmux display-message -p -t "$1" '#{pane_dead}' 2>/dev/null)" = "1" ]
+}
+
+# pane_gone <pane id>: the pane does not exist any more. Must be asked
+# separately from pane_dead, which answers "" (not "1") for a pane that is
+# gone rather than dead, so a loop testing only pane_dead never notices.
+pane_gone() {
+  [ -z "$(tmux display-message -p -t "$1" '#{pane_id}' 2>/dev/null)" ]
 }
 
 # caller_window: the window of the pane running this script, when that pane
@@ -155,7 +188,13 @@ start_pane() {
     fi
   fi
   [ -z "$SERVE_ENV_FILE" ] || env_load="set -a && . '$SERVE_ENV_FILE' && set +a && "
-  tmux set-option -t "=$SESSION:" remain-on-exit on >/dev/null
+  # Keep this pane if its server dies on boot, so its output survives. Set on
+  # the pane itself: "=$SESSION:" targets the session's *current* window, which
+  # since server panes moved out of the caller's window is usually not the
+  # window holding them - a crashing pane then closed and took its output with
+  # it ("no web pane to inspect"). tmux.conf's pane-died hook still closes a
+  # pane whose process was stopped on purpose.
+  tmux set-option -p -t "$pid" remain-on-exit on >/dev/null
   tmux respawn-pane -k -t "$pid" "cd '$APP_DIR' && export PATH='$PATH' && ${env_load}exec $cmd"
   tmux select-pane -t "$pid" -T "$title" # respawn-pane resets it on some tmux versions
   tmux set-option -p -t "$pid" @serve-title "$title"
@@ -191,6 +230,11 @@ wait_up() {
     if [ -z "$pid" ] || pane_dead "$pid"; then
       echo "ERROR: $title exited during boot."
       dump_pane "$title"
+      return 1
+    fi
+    if pane_gone "$pid"; then
+      echo "ERROR: $title's pane is gone; its output went with it."
+      echo "       (the process exited cleanly or on a signal, so the pane-died hook closed it)"
       return 1
     fi
     sleep 1
