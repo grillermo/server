@@ -3,6 +3,8 @@
 #
 rm /opt/homebrew/var/postgresql@18/postmaster.pid
 brew services start redis&
+# Rails apps' web/job panes connect through it (DATABASE_PORT=6432); see pgbouncer/pgbouncer.ini.
+brew services start pgbouncer&
 
 # Base directory for all projects
 BASE_DIR="/Users/grillermo/c"
