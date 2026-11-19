@@ -26,17 +26,20 @@ SERVE_ENV_FILE=""
 
 # serve_require_clean_main: deploy only committed work. Refuses when the
 # checkout is not on main or tracked files have uncommitted changes.
-# Untracked files (logs, .env, scratch) don't count.
+# Untracked files (logs, .env, scratch) don't count. A service living in a
+# subfolder of a busy repo sets SERVE_SCOPE=. (a path relative to APP_DIR) so
+# only changes under it block the deploy; unset, the whole repo is checked.
 serve_require_clean_main() {
-  local branch
+  local branch scope=()
   branch=$(git -C "$APP_DIR" symbolic-ref --short -q HEAD || echo "(detached)")
   if [ "$branch" != main ]; then
     echo "ERROR: $APP_DIR is on '$branch', not main. Not deploying."
     exit 1
   fi
-  if [ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no)" ]; then
-    echo "ERROR: uncommitted changes in $APP_DIR. Commit or stash them; not deploying:"
-    git -C "$APP_DIR" status --short --untracked-files=no
+  [ -z "${SERVE_SCOPE:-}" ] || scope=(-- "$SERVE_SCOPE")
+  if [ -n "$(git -C "$APP_DIR" status --porcelain --untracked-files=no ${scope[@]+"${scope[@]}"})" ]; then
+    echo "ERROR: uncommitted changes in $APP_DIR${SERVE_SCOPE:+ (scope $SERVE_SCOPE)}. Commit or stash them; not deploying:"
+    git -C "$APP_DIR" status --short --untracked-files=no ${scope[@]+"${scope[@]}"}
     exit 1
   fi
 }
