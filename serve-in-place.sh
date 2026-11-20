@@ -56,8 +56,11 @@ serve_load_env() {
   SERVE_ENV_FILE="$file"
 }
 
+# Never Caddy: on the macmini it also listens on 192.168.1.1:<app port> to
+# make loopback-bound apps reachable from the LAN (see the Caddyfile), and
+# killing it here would take every site down on each deploy.
 port_listeners() {
-  lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null || true
+  lsof -ti "tcp:$1" -sTCP:LISTEN -a -c '^caddy' 2>/dev/null || true
 }
 
 # The previous occupant of our port is always ours (including a foreground
