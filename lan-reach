@@ -1,0 +1,139 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Which routes in routes.yml can't be opened at http://<this machine's LAN IP>:PORT,
+# the URL the directory (http://192.168.1.1:81) links to, and why.
+#
+#   sudo ./lan-reach                 the tunnel cloudflared runs on this machine
+#   sudo ./lan-reach --tunnel NAME   that tunnel's routes, probed on this machine
+#
+# sudo so lsof can show the bind address of every user's listener. For each
+# HTTP route it fetches http://localhost:PORT/ and http://LAN-IP:PORT/ and
+# compares them. The report also goes to logs/lan-reach-<host>.txt.
+#
+# Verdicts:
+#   ok         the LAN URL answers like localhost does
+#   LOOPBACK   bound to 127.0.0.1/::1 only: the LAN URL is refused. Fix: bind 0.0.0.0
+#   HOST       the LAN URL answers 4xx/5xx while localhost doesn't: the app rejects
+#              the Host header (Rails config.hosts, Vite allowedHosts, Django
+#              ALLOWED_HOSTS, ...). Fix: allow the IP, or the 192.168.1.0/24 range
+#   REDIRECT   the LAN URL redirects to another host (often https://its.domain)
+#   DOWN       nothing listens on the port (see ./route-health)
+#   DIFFERENT  both answer but differently; look at the detail
+#   skip       not an HTTP route
+
+require "json"
+require "open3"
+require "socket"
+
+load File.join(__dir__, "routes") # Routes::Registry, without running its CLI
+
+Encoding.default_external = Encoding::UTF_8
+
+def sh(*cmd)
+  out, = Open3.capture2e(*cmd)
+  out
+rescue SystemCallError
+  ""
+end
+
+def running_tunnel_id
+  token = sh("ps", "axww", "-o", "command=")[/cloudflared .*--token[ =](\S+)/, 1]
+  token && JSON.parse(token.unpack1("m"))["t"]
+rescue JSON::ParserError, ArgumentError
+  nil
+end
+
+def lan_ip
+  addrs = Socket.ip_address_list.select(&:ipv4_private?).map(&:ip_address)
+  addrs.find { |a| a.start_with?("192.168.1.") } || addrs.first ||
+    abort("lan-reach: can't find this machine's LAN IP")
+end
+
+# The addresses the port is bound to ("127.0.0.1", "*", "[::1]", ...) and the
+# owning commands.
+def binds(port)
+  out = sh("lsof", "-nP", "-iTCP:#{port}", "-sTCP:LISTEN")
+  rows = out.lines.drop(1).map(&:split)
+  if rows.empty? && File.exist?("/proc")
+    addrs = sh("ss", "-ltnH", "sport = :#{port}").lines.map { |l| l.split[3].to_s.sub(/:#{port}\z/, "") }
+    return [addrs.uniq, []]
+  end
+  addrs = rows.map { |r| r[8].to_s.sub(/:#{port}\z/, "") }.uniq
+  procs = rows.map { |r| "#{r[0]} (pid #{r[1]}, #{r[2]})" }.uniq
+  [addrs, procs]
+end
+
+# [status, location, title] of GET url, without following redirects.
+def fetch(url)
+  out = sh("curl", "-s", "-m", "6", "-o", "-", "-D", "/dev/stderr", "-w", "\n%{http_code}", url)
+  status = out.lines.last.to_s.strip
+  status = "refused/timeout" if status.empty? || status == "000"
+  location = out[/^location:\s*(\S+)/i, 1]
+  title = out[%r{<title>\s*([^<]{1,80})}i, 1]&.strip
+  [status, location, title]
+end
+
+tunnel_name = ARGV[ARGV.index("--tunnel") + 1] if ARGV.include?("--tunnel")
+registry = Routes::Registry.load(Routes::REGISTRY)
+tunnel = if tunnel_name
+           registry.tunnel(tunnel_name)
+         else
+           id = running_tunnel_id
+           registry.tunnels.each_value.find { |t| t.id == id } or
+             abort "lan-reach: no tunnel from routes.yml runs here; pass --tunnel NAME (#{registry.tunnels.keys.join(', ')})"
+         end
+warn "lan-reach: not root, so bind addresses of other users' listeners are missing; run with sudo" unless Process.uid.zero?
+
+ip = lan_ip
+host = Socket.gethostname.split(".").first
+lines = ["lan-reach on #{host} (#{ip}) at #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}, tunnel #{tunnel.name}", ""]
+counts = Hash.new(0)
+seen_ports = {}
+
+tunnel.routes.each do |hostname, route|
+  uri = URI(route["service"]) rescue nil
+  unless uri && %w[http https].include?(uri.scheme) && uri.port
+    counts["skip"] += 1
+    lines << format("%-9s %-40s %s", "skip", hostname, route["service"])
+    next
+  end
+  port = uri.port
+  addrs, procs = binds(port)
+  local = fetch("#{uri.scheme}://localhost:#{port}/")
+  lan = fetch("#{uri.scheme}://#{ip}:#{port}/")
+  loopback_only = !addrs.empty? && addrs.all? { |a| a.start_with?("127.", "[::1]", "::1", "localhost") }
+
+  lan_host = lan[1] && (URI(lan[1]).host rescue nil)
+  verdict = if addrs.empty? && local[0] == "refused/timeout" then "DOWN"
+            elsif loopback_only || (lan[0] == "refused/timeout" && local[0] != "refused/timeout") then "LOOPBACK"
+            elsif lan[0].start_with?("3") && lan_host && lan_host != ip then "REDIRECT"
+            elsif lan[0].to_i >= 400 && local[0].to_i < 400 then "HOST"
+            elsif lan[0] == local[0] then "ok"
+            else "DIFFERENT"
+            end
+  counts[verdict] += 1
+  shared = seen_ports[port]
+  seen_ports[port] ||= hostname
+
+  lines << format("%-9s %-40s :%-5s LAN http://%s:%s/", verdict, hostname, port, ip, port)
+  next if verdict == "ok"
+
+  lines << "          bound to #{addrs.empty? ? 'nothing' : addrs.join(', ')}#{procs.empty? ? '' : "  #{procs.join('; ')}"}"
+  lines << "          localhost: #{local.compact.join('  ')}"
+  lines << "          LAN:       #{lan.compact.join('  ')}"
+  lines << "          (same port as #{shared})" if shared
+end
+
+lines << "" << counts.sort.map { |verdict, n| "#{verdict} #{n}" }.join(", ")
+report = lines.join("\n") + "\n"
+puts report
+
+dir = File.join(__dir__, "logs")
+Dir.mkdir(dir) unless Dir.exist?(dir)
+path = File.join(dir, "lan-reach-#{host}.txt")
+File.write(path, report)
+if Process.uid.zero? && ENV["SUDO_UID"]
+  [dir, path].each { |p| File.chown(ENV["SUDO_UID"].to_i, ENV["SUDO_GID"].to_i, p) }
+end
+puts "Saved to #{path}"
