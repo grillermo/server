@@ -12,11 +12,11 @@
 # included). No sudo. The report also goes to logs/lan-reach-<host>.txt.
 #
 # Verdicts:
-#   ok         answers (2xx, 3xx to the same address, 401 from an app login)
+#   ok         answers (2xx, 3xx to the same address, 401 login, 404 no page at /)
 #   REFUSED    connection refused: usually bound to 127.0.0.1, or nothing runs
 #   TIMEOUT    no answer: firewall, or the machine is off
 #   REDIRECT   sends the browser to another host (often https://its.domain)
-#   ERROR      answers 4xx/5xx: often the app rejecting the IP as Host
+#   ERROR      answers 403/5xx (502: Caddy is there but the app is down): often the app rejecting the IP as Host
 #              (Rails config.hosts answers a bare 403, Vite allowedHosts, ...)
 #   skip       not an HTTP route, or a machine with no known LAN IP
 
@@ -85,7 +85,7 @@ tunnels.each do |tunnel|
               elsif status == "000" then "ERROR"
               elsif blocked then "ERROR"
               elsif status.start_with?("3") && target && target != ip then "REDIRECT"
-              elsif status.to_i < 400 || status == "401" then "ok"
+              elsif status.to_i < 400 || %w[401 404].include?(status) then "ok" # 404: up, just no page at /
               else "ERROR"
               end
     counts[verdict] += 1
