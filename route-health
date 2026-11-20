@@ -1,0 +1,122 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+#
+# Which routes in routes.yml are dead, checked on the machine that serves them.
+#
+#   sudo ./route-health                 the tunnel cloudflared runs on this machine
+#   sudo ./route-health --tunnel NAME   that tunnel's routes, probed on this machine
+#
+# Run it with sudo: only root sees every listener (macOS sshd on :22, other
+# users' processes). For each route it reports what listens on the service
+# port (process, pid, working directory), the local HTTP status, and the
+# status through Cloudflare (https://HOST/). The report also goes to
+# logs/route-health-<host>.txt (gitignored), owned by the sudo caller.
+#
+# Verdicts:
+#   ok        something listens and the public URL answers below 500
+#   DEAD      nothing listens on the port
+#   BROKEN    something listens, but the public URL answers 5xx / 530 or times out
+#   WARN      public URL fine but the local probe failed, or a non-HTTP route
+#             that only has the port check
+
+require "json"
+require "open3"
+require "socket"
+
+load File.join(__dir__, "routes") # Routes::Registry, without running its CLI
+
+Encoding.default_external = Encoding::UTF_8
+
+def sh(*cmd)
+  out, = Open3.capture2e(*cmd)
+  out
+rescue SystemCallError
+  ""
+end
+
+def running_tunnel_id
+  token = sh("ps", "axww", "-o", "command=")[/cloudflared .*--token[ =](\S+)/, 1]
+  token && JSON.parse(token.unpack1("m"))["t"]
+rescue JSON::ParserError, ArgumentError
+  nil
+end
+
+# [{pid:, name:, cwd:, command:}] listening on TCP port, as seen by lsof.
+def listeners(port)
+  pids = sh("lsof", "-nP", "-iTCP:#{port}", "-sTCP:LISTEN", "-t").split.uniq
+  if pids.empty? && File.exist?("/proc") # Linux without lsof
+    line = sh("ss", "-ltnpH", "sport = :#{port}")
+    pids = line.scan(/pid=(\d+)/).flatten.uniq
+  end
+  pids.map do |pid|
+    cwd = if File.exist?("/proc/#{pid}/cwd")
+            File.readlink("/proc/#{pid}/cwd") rescue "?"
+          else
+            sh("lsof", "-a", "-p", pid, "-d", "cwd", "-Fn")[/^n(.+)$/, 1] || "?"
+          end
+    {
+      pid: pid,
+      command: sh("ps", "-o", "command=", "-p", pid).strip[0, 90],
+      cwd: cwd,
+    }
+  end
+end
+
+def http_status(url)
+  code = sh("curl", "-s", "-o", "/dev/null", "-m", "8", "-k", "-w", "%{http_code}", url).strip
+  code.empty? || code == "000" ? "timeout/refused" : code
+end
+
+tunnel_name = ARGV[ARGV.index("--tunnel") + 1] if ARGV.include?("--tunnel")
+registry = Routes::Registry.load(Routes::REGISTRY)
+tunnel = if tunnel_name
+           registry.tunnel(tunnel_name)
+         else
+           id = running_tunnel_id
+           registry.tunnels.each_value.find { |t| t.id == id } or
+             abort "route-health: no tunnel from routes.yml runs here; pass --tunnel NAME (#{registry.tunnels.keys.join(', ')})"
+         end
+
+warn "route-health: not root, so listeners owned by other users (e.g. sshd) are invisible; run with sudo" unless Process.uid.zero?
+
+host = Socket.gethostname.split(".").first
+lines = ["route-health on #{host} at #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}, tunnel #{tunnel.name}, #{tunnel.routes.length} routes", ""]
+counts = Hash.new(0)
+
+tunnel.routes.each do |hostname, route|
+  service = route["service"]
+  uri = URI(service) rescue nil
+  port = uri&.port
+  http = uri && %w[http https].include?(uri.scheme)
+  found = port ? listeners(port) : []
+  local = http ? http_status(service) : "-"
+  public = http ? http_status("https://#{hostname}/") : "-"
+  public_bad = public == "timeout/refused" || public.to_i >= 500
+
+  verdict = if found.empty? then "DEAD"
+            elsif !http then "WARN"
+            elsif public_bad then "BROKEN"
+            elsif local == "timeout/refused" then "WARN"
+            else "ok"
+            end
+  counts[verdict] += 1
+
+  lines << format("%-6s %-44s %s", verdict, hostname, service)
+  lines << format("         local %s  public %s", local, public) if http
+  found.each { |l| lines << "         pid #{l[:pid]} cwd #{l[:cwd]}  #{l[:command]}" }
+  lines << "         note: #{route['note']}" if route["note"]
+end
+
+lines << "" << counts.sort.map { |verdict, n| "#{verdict} #{n}" }.join(", ")
+report = lines.join("\n") + "\n"
+puts report
+
+dir = File.join(__dir__, "logs")
+Dir.mkdir(dir) unless Dir.exist?(dir)
+path = File.join(dir, "route-health-#{host}.txt")
+File.write(path, report)
+if Process.uid.zero? && ENV["SUDO_UID"]
+  File.chown(ENV["SUDO_UID"].to_i, ENV["SUDO_GID"].to_i, path)
+  File.chown(ENV["SUDO_UID"].to_i, ENV["SUDO_GID"].to_i, dir)
+end
+puts "Saved to #{path}"
