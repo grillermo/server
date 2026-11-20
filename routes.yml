@@ -35,14 +35,7 @@ tunnels:
     routes:
       eslabony.chiq.me: http://localhost:3002
       ssh.chiq.me: ssh://localhost:22
-      juanpaco.chiq.me: http://localhost:3003
-      torrents.chiq.me:
-        service: http://localhost:9091
-        originRequest:
-          httpHostHeader: ''
       plex.chiq.me: http://localhost:32400
-      kimai.chiq.me: http://localhost:8001
-      uptimia-to-nfty.chiq.me: http://localhost:8000
       serve.chiq.me: http://localhost:8009
       auto-email-classifier.chiq.me: http://localhost:3000
       labs.chiq.me: http://localhost:3009
@@ -51,7 +44,6 @@ tunnels:
       readitsoon.app: http://localhost:4000
       grillermo.com: http://localhost:80
       blog.grillermo.com: http://localhost:4321
-      monit.chiq.me: http://localhost:2812
       yoto_uploader.chiq.me: http://localhost:3200
       videos.chiq.me: http://localhost:3050
       yosubee.chiq.me: http://localhost:3200
@@ -61,7 +53,6 @@ tunnels:
       yosubee.com: http://localhost:3200
       whatsapp.chiq.me: http://localhost:3080
       bank-app-parser.chiq.me: http://localhost:4030
-      chatwoot.antesis.com.mx: http://localhost:4500
       torlink.chiq.me: http://127.0.0.1:5173
       comunidad.antesis.com.mx: http://localhost:4020
       ntfy.chiq.me: http://localhost:5333
@@ -81,7 +72,6 @@ tunnels:
       news.chiq.me: http://localhost:33842
       music.chiq.me: http://localhost:4533
       insultos-argentinos.grillermo.com: http://localhost:6640
-      walking.chiq.me: http://127.0.0.1:5090
       chat.chiq.me: http://localhost:8090
       sota-llms.chiq.me: http://localhost:8091
       compras.chiq.me: http://localhost:4031
