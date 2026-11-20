@@ -192,6 +192,10 @@ func main() {
 		})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
+	// Reloading after a wrong password lands here: back to the form.
+	http.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
 	http.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})

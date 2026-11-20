@@ -22,6 +22,10 @@
   .tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; margin-left: .3rem; white-space: nowrap; }
   .note { color: var(--muted); font-size: .85rem; }
   tr.hidden, section.hidden { display: none; }
+  tr.sel td { background: #2b7de922; }
+  tr.sel td:first-child { box-shadow: inset 3px 0 #2b7de9; }
+  .keys { color: var(--muted); font-size: .8rem; margin: 0; }
+  kbd { font: .75rem ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; }
 </style>
 </head>
 <body>
@@ -29,13 +33,14 @@
   <h1>Services directory</h1>
   <span class="meta">{{.Total}} routes · routes.yml changed {{.Updated}}</span>
 </header>
-<input type="search" id="q" placeholder="Filter by host or port…" autofocus>
+<input type="search" id="q" placeholder="Filter by host or port…" autofocus autocomplete="off">
+<p class="keys"><kbd>Enter</kbd> opens the highlighted host in a new tab · <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Esc</kbd> clears · <kbd>/</kbd> back to search</p>
 {{range .Groups}}
 <section>
   <h2>{{if .Machine.Name}}{{.Machine.Name}} <small>{{.Machine.IP}}</small> · {{end}}<small>tunnel {{.Tunnel}}</small></h2>
   <table>
   {{range .Rows}}
-    <tr data-search="{{.Host}} {{.Port}} {{.Caddy}} {{.Note}}">
+    <tr data-host="{{.Host}}" data-search="{{.Host}} {{.Port}} {{.Caddy}} {{.Note}}"{{if eq .Scheme "http" "https"}} data-url="https://{{.Host}}/"{{else if .LAN}} data-url="{{.LAN}}"{{end}}>
       <td class="port">{{if .LAN}}<a href="{{.LAN}}" title="Open on the LAN">{{.Port}}</a>{{else}}{{.Port}}{{end}}</td>
       <td>
         {{if eq .Scheme "http" "https"}}<a href="https://{{.Host}}/">{{.Host}}</a>{{else}}{{.Host}}{{end}}
@@ -53,19 +58,66 @@
 {{end}}
 <script>
   const q = document.getElementById("q");
-  q.addEventListener("input", () => {
+  const rows = [...document.querySelectorAll("tr[data-search]")];
+  let sel = null;
+
+  const visible = () => rows.filter(tr => !tr.classList.contains("hidden") && tr.dataset.url);
+
+  function select(tr) {
+    if (sel) sel.classList.remove("sel");
+    sel = tr;
+    if (sel) {
+      sel.classList.add("sel");
+      sel.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function filter() {
     const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
     for (const section of document.querySelectorAll("section")) {
       let shown = 0;
       for (const tr of section.querySelectorAll("tr")) {
-        const hay = tr.dataset.search.toLowerCase();
-        const hit = terms.every(t => hay.includes(t));
+        const hit = terms.every(t => tr.dataset.search.toLowerCase().includes(t));
         tr.classList.toggle("hidden", !hit);
         shown += hit;
       }
       section.classList.toggle("hidden", shown === 0);
     }
+    // Highlight the best match: a host that starts with the first term,
+    // else the first visible row. Nothing is highlighted while the box is empty.
+    const v = visible();
+    const first = terms[0];
+    select(first ? (v.find(tr => tr.dataset.host.startsWith(first)) || v[0] || null) : null);
+  }
+
+  q.addEventListener("input", filter);
+  q.addEventListener("keydown", e => {
+    const v = visible();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const tr = sel || v[0];
+      if (tr) window.open(tr.dataset.url, "_blank", "noopener");
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!v.length) return;
+      const i = v.indexOf(sel);
+      const next = e.key === "ArrowDown" ? (i < 0 ? 0 : Math.min(i + 1, v.length - 1)) : Math.max(i - 1, 0);
+      select(v[next]);
+    } else if (e.key === "Escape") {
+      q.value = "";
+      filter();
+    }
   });
+  // "/" from anywhere on the page goes back to the search box.
+  document.addEventListener("keydown", e => {
+    if (e.key === "/" && document.activeElement !== q) {
+      e.preventDefault();
+      q.focus();
+      q.select();
+    }
+  });
+  // Coming back to this tab (or the browser restoring it): ready to type again.
+  window.addEventListener("pageshow", () => { q.focus(); filter(); });
 </script>
 </body>
 </html>
