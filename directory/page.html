@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Services directory</title>
+<style>
+  :root { color-scheme: light dark; --muted: #888; --line: #8884; --accent: #2b7de9; }
+  body { font: 15px/1.4 -apple-system, system-ui, sans-serif; margin: 0 auto; max-width: 980px; padding: 1.5rem 1rem 4rem; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; }
+  h1 { font-size: 1.4rem; margin: 0; }
+  .meta { color: var(--muted); font-size: .85rem; }
+  input[type=search] { width: 100%; box-sizing: border-box; font: inherit; padding: .55rem .75rem; margin: 1rem 0 .5rem; border: 1px solid var(--line); border-radius: 8px; background: transparent; }
+  h2 { font-size: 1.05rem; margin: 1.75rem 0 .4rem; }
+  h2 small { color: var(--muted); font-weight: normal; font-family: ui-monospace, monospace; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .35rem .5rem; border-top: 1px solid var(--line); vertical-align: top; }
+  td.port { font: 600 1rem ui-monospace, monospace; text-align: right; width: 4.5rem; white-space: nowrap; }
+  td.port a { text-decoration: none; }
+  td.lan { width: 11rem; white-space: nowrap; font: .85rem ui-monospace, monospace; }
+  a { color: var(--accent); }
+  .tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; margin-left: .3rem; white-space: nowrap; }
+  .note { color: var(--muted); font-size: .85rem; }
+  tr.hidden, section.hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Services directory</h1>
+  <span class="meta">{{.Total}} routes · routes.yml changed {{.Updated}}</span>
+</header>
+<input type="search" id="q" placeholder="Filter by host or port…" autofocus>
+{{range .Groups}}
+<section>
+  <h2>{{if .Machine.Name}}{{.Machine.Name}} <small>{{.Machine.IP}}</small> · {{end}}<small>tunnel {{.Tunnel}}</small></h2>
+  <table>
+  {{range .Rows}}
+    <tr data-search="{{.Host}} {{.Port}} {{.Caddy}} {{.Note}}">
+      <td class="port">{{if .LAN}}<a href="{{.LAN}}" title="Open on the LAN">{{.Port}}</a>{{else}}{{.Port}}{{end}}</td>
+      <td>
+        {{if eq .Scheme "http" "https"}}<a href="https://{{.Host}}/">{{.Host}}</a>{{else}}{{.Host}}{{end}}
+        {{if and .Scheme (ne .Scheme "http") (ne .Scheme "https")}}<span class="tag">{{.Scheme}}</span>{{end}}
+        {{if .Caddy}}<span class="tag" title="Caddy listens on {{.Port}} and proxies to {{.Caddy}}">caddy → {{.Caddy}}</span>{{end}}
+        {{if .Loopback}}<span class="tag" title="Bound to 127.0.0.1: only reachable through the tunnel">loopback</span>{{end}}
+        {{if .Path}}<span class="tag">path {{.Path}}</span>{{end}}
+        {{if .Note}}<div class="note">{{.Note}}</div>{{end}}
+      </td>
+      <td class="lan">{{if .LAN}}<a href="{{.LAN}}">{{.LAN}}</a>{{end}}</td>
+    </tr>
+  {{end}}
+  </table>
+</section>
+{{end}}
+<script>
+  const q = document.getElementById("q");
+  q.addEventListener("input", () => {
+    const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+    for (const section of document.querySelectorAll("section")) {
+      let shown = 0;
+      for (const tr of section.querySelectorAll("tr")) {
+        const hay = tr.dataset.search.toLowerCase();
+        const hit = terms.every(t => hay.includes(t));
+        tr.classList.toggle("hidden", !hit);
+        shown += hit;
+      }
+      section.classList.toggle("hidden", shown === 0);
+    }
+  });
+</script>
+</body>
+</html>

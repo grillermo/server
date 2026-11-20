@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# (Re)build and (re)start the services directory in the "web" pane of tmux
+# session "directory", in place, and return. It listens on loopback 5399;
+# Caddy exposes it to the LAN only at http://192.168.1.1:81 (../Caddyfile).
+# Runs on the macmini; after-reboot.sh starts it at boot.
+#
+# The page asks for DIRECTORY_PASSWORD, read from .env here (gitignored).
+# First time on a machine:
+#   echo "DIRECTORY_PASSWORD=$(openssl rand -base64 12)" > .env
+set -euo pipefail
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$APP_DIR"
+SESSION=directory
+# shellcheck source=/dev/null
+. "$HOME/c/server/serve-in-place.sh"
+serve_load_env
+
+PORT=5399
+go build -o directory .
+
+serve_pane web "$PORT" "./directory -addr 127.0.0.1:$PORT" /health
+serve_attach

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Services directory</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.4 -apple-system, system-ui, sans-serif; display: grid; place-items: center; min-height: 90vh; margin: 0; }
+  form { display: flex; flex-direction: column; gap: .6rem; width: min(20rem, 90vw); }
+  h1 { font-size: 1.3rem; margin: 0 0 .3rem; }
+  input, button { font: inherit; padding: .55rem .75rem; border-radius: 8px; border: 1px solid #8886; }
+  button { background: #2b7de9; color: #fff; border: 0; cursor: pointer; }
+  .wrong { color: #d33; font-size: .9rem; margin: 0; }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <h1>Services directory</h1>
+  <input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus required>
+  {{if .Wrong}}<p class="wrong">Wrong password.</p>{{end}}
+  <button type="submit">Open</button>
+</form>
+</body>
+</html>

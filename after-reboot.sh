@@ -46,6 +46,7 @@ SERVICES=(
     "claudecodeui"
     "music-upkeep"
     "pocket-id"
+    "server/directory"
 )
 
 # Function to create and configure a tmux session
