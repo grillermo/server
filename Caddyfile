@@ -534,9 +534,9 @@
 
 # patatata-smash — the Cloudflare tunnel for smash.chiq.me points at :6650.
 :6650 {
-	root * /Users/grillermo/c/patatata-smash
+	root * /Users/grillermo/c/patata-smash
 	rewrite / /game.html
-	@private not path /game.html
+	@private not path /game.html /1 /1/* /2 /2/*
 	respond @private 404
 	file_server
 	header Cache-Control "no-cache"
