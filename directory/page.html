@@ -34,13 +34,13 @@
   <span class="meta">{{.Total}} routes · routes.yml changed {{.Updated}}</span>
 </header>
 <input type="search" id="q" placeholder="Filter by host or port…" autofocus autocomplete="off">
-<p class="keys"><kbd>Enter</kbd> opens the highlighted host in a new tab · <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Esc</kbd> clears · <kbd>/</kbd> back to search</p>
+<p class="keys"><kbd>Enter</kbd> opens the highlighted app on the LAN in a new tab · <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Esc</kbd> clears · <kbd>/</kbd> back to search</p>
 {{range .Groups}}
 <section>
   <h2>{{if .Machine.Name}}{{.Machine.Name}} <small>{{.Machine.IP}}</small> · {{end}}<small>tunnel {{.Tunnel}}</small></h2>
   <table>
   {{range .Rows}}
-    <tr data-host="{{.Host}}" data-search="{{.Host}} {{.Port}} {{.Caddy}} {{.Note}}"{{if eq .Scheme "http" "https"}} data-url="https://{{.Host}}/"{{else if .LAN}} data-url="{{.LAN}}"{{end}}>
+    <tr data-host="{{.Host}}" data-search="{{.Host}} {{.Port}} {{.Caddy}} {{.Note}}"{{if and .LAN (not .Loopback)}} data-url="{{.LAN}}"{{else if eq .Scheme "http" "https"}} data-url="https://{{.Host}}/"{{end}}>
       <td class="port">{{if .LAN}}<a href="{{.LAN}}" title="Open on the LAN">{{.Port}}</a>{{else}}{{.Port}}{{end}}</td>
       <td>
         {{if eq .Scheme "http" "https"}}<a href="https://{{.Host}}/">{{.Host}}</a>{{else}}{{.Host}}{{end}}
