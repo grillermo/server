@@ -34,7 +34,6 @@ tunnels:
     caddy: true
     routes:
       eslabony.chiq.me: http://localhost:3002
-      ssh.chiq.me: ssh://localhost:22
       plex.chiq.me: http://localhost:32400
       serve.chiq.me: http://localhost:8009
       auto-email-classifier.chiq.me: http://localhost:3000
