@@ -33,12 +33,17 @@ import (
 // machines maps a tunnel name in routes.yml to the machine that runs it
 // (see the my-machines rule). A tunnel missing here is listed without LAN links.
 var machines = map[string]machine{
-	"macmini-production":     {"macmini", "192.168.1.1"},
-	"macbookpro-development": {"immunemac", "192.168.1.2"},
-	"pc":                     {"PC", "192.168.1.3"},
+	"macmini-production":     {"macmini", "192.168.1.1", true},
+	"macbookpro-development": {"immunemac", "192.168.1.2", false},
+	"pc":                     {"PC", "192.168.1.3", false},
 }
 
-type machine struct{ Name, IP string }
+// LANDoors: the machine's Caddy also listens on IP:PORT for apps bound to
+// 127.0.0.1 (the LAN doors block in ../Caddyfile), so their LAN URL works.
+type machine struct {
+	Name, IP string
+	LANDoors bool
+}
 
 //go:embed page.html login.html
 var pageFS embed.FS
@@ -147,7 +152,7 @@ func newRow(host string, r route, m machine) row {
 	}
 	out.Scheme = u.Scheme
 	out.Port = u.Port()
-	out.Loopback = u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"
+	out.Loopback = (u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") && !m.LANDoors
 	if out.Port != "" && m.IP != "" && (u.Scheme == "http" || u.Scheme == "https") {
 		out.LAN = fmt.Sprintf("%s://%s:%s/", u.Scheme, m.IP, out.Port)
 	}

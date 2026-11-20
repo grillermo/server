@@ -37,7 +37,7 @@ tunnels:
 	want := []row{
 		{Host: "crm.example.com", Scheme: "http", Port: "3070", LAN: "http://192.168.1.1:3070/", Caddy: "3072", Note: "twenty"},
 		{Host: "ssh.chiq.me", Scheme: "ssh", Port: "22"},
-		{Host: "var.chiq.me", Scheme: "http", Port: "9998", Loopback: true, LAN: "http://192.168.1.1:9998/"},
+		{Host: "var.chiq.me", Scheme: "http", Port: "9998", LAN: "http://192.168.1.1:9998/"}, // Caddy's LAN door
 	}
 	for i, w := range want {
 		if rows[i] != w {
