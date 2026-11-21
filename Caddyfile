@@ -581,7 +581,6 @@ http://192.168.1.1:9998, # var
 http://192.168.1.1:3080, # daisolar-cotizaciones, whatsapp
 http://192.168.1.1:4311, # daisolar-bot
 http://192.168.1.1:33334, # files.grillermo.com
-http://192.168.1.1:32400, # plex
 http://192.168.1.1:5173 { # torlink
 	bind 192.168.1.1
 	# The port the connection arrived on, not the Host header's (spoofable).
