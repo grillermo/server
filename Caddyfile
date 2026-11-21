@@ -139,7 +139,7 @@
 
 # patatatube — Caddy owns client-facing :3050, app runs on :3051.
 # Static assets, packaged HLS segments and downloaded MP4s come straight off
-# disk; API, SSR page, library streams and HLS packaging proxy to FastAPI.
+# disk; API, SSR page and HLS packaging proxy to FastAPI.
 #
 # The token check for disk-served files happens *here*, not via forward_auth:
 # every HLS segment used to cost a round trip to FastAPI /check-auth, so an
@@ -229,8 +229,8 @@
 	}
 
 	# 3. Downloaded/uploaded videos live at videos/{id}.mp4 — serve directly
-	#    with Caddy's native Range/ETag support. Library videos (arbitrary
-	#    source paths, version resolution) fall through to the app.
+	#    with Caddy's native Range/ETag support. A file that is not on disk yet
+	#    falls through to the app.
 	@stream path_regexp stream ^/videos/([0-9]+)/stream$
 	handle @stream {
 		# MEDIA_ROOT/videos, matching paths.VIDEOS_DIR.
