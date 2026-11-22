@@ -27,6 +27,7 @@ SERVICES=(
     "patatatube"
     "comunidad-antesis"
     "comunidad-antesis-staging:./serve-staging"
+    "devin"
     "torlink"
     "ntfyllermo"
     "my-claude-usage"

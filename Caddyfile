@@ -371,6 +371,63 @@
 	}
 }
 
+# devin — live webcam lessons; the Cloudflare tunnel for devin.grillermo.com
+# points at :4040. Blue (4041) and green (4042) Puma slots, only one running
+# between deploys (see ~/c/devin/serve); the health check marks the stopped one
+# down and lb_try_duration retries a request that still reaches it. The app
+# reads the client IP from CF-Connecting-IP, which Caddy passes through as is.
+:4040 {
+	encode zstd gzip
+
+	@blocked {
+		path_regexp \.(php|aspx|asp|jsp|cgi)$
+		path /wp-admin* /wp-login.php /xmlrpc.php
+	}
+	respond @blocked "Not Found" 404
+
+	# Dev/test builds and the build manifest never leave the box.
+	@private path /vite-dev/* /vite-test/* /vite/.vite/*
+	handle @private {
+		respond "Not Found" 404
+	}
+
+	# Content-hashed Vite assets straight from disk; immutable only when the
+	# file exists, so a missing chunk is never cached as a 404 for a year.
+	handle /vite/* {
+		root * /Users/grillermo/c/devin/public
+		@built file
+		header @built Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	handle {
+		reverse_proxy localhost:4041 localhost:4042 {
+			lb_policy first
+			fail_duration 5s
+			lb_try_duration 8s
+
+			health_uri /health
+			health_interval 10s
+			health_timeout 3s
+			health_status 200
+			health_body `"status":"ok"`
+
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	log {
+		output file /Users/grillermo/c/devin/log/caddy_access.log {
+			roll_size 100mb
+			roll_keep 10
+			roll_keep_for 7d
+		}
+	}
+}
+
 # cal.diy — the Cloudflare tunnel for cal.grillermo.com points at :3020.
 # `next start` runs on :3021 (see ~/c/cal.diy/serve).
 :3020 {
