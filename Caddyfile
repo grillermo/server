@@ -138,13 +138,12 @@
 }
 
 # patatatube — Caddy owns client-facing :3050, app runs on :3051.
-# Static assets, packaged HLS segments and downloaded MP4s come straight off
-# disk; API, SSR page and HLS packaging proxy to FastAPI.
+# Static assets and downloaded MP4s come straight off disk; the API and the
+# SSR page proxy to FastAPI.
 #
 # The token check for disk-served files happens *here*, not via forward_auth:
-# every HLS segment used to cost a round trip to FastAPI /check-auth, so an
-# iOS "Download all" turned thousands of 5ms disk reads into thousands of
-# Python requests. UPLOAD_TOKEN reaches Caddy via `caddy run --envfile
+# a round trip to FastAPI /check-auth per range request turned an iOS
+# "Download all" into thousands of Python requests. UPLOAD_TOKEN reaches Caddy via `caddy run --envfile
 # /Users/grillermo/c/patatatube/.env` (see homebrew.mxcl.caddy.plist).
 :3050 {
 	root * /Users/grillermo/c/patatatube
@@ -189,46 +188,7 @@
 		file_server
 	}
 
-	# 2. HLS assets: token check in-process, then serve the packaged file
-	#    from data/hls/{id}/ if it exists; otherwise fall through to the app
-	#    (which triggers packaging on master.m3u8 and answers 409/404).
-	@hls path_regexp hls ^/videos/([0-9]+)/hls/(.+)$
-	handle @hls {
-		# MEDIA_ROOT/data/hls, matching paths.HLS_DIR; falls back to reverse_proxy
-		# below when unset (root becomes the site root, so try_files just misses).
-		root * {env.MEDIA_ROOT}
-		route {
-			respond @ptunauth 401
-			@onDisk file {
-				try_files /data/hls/{re.hls.1}/{re.hls.2}
-			}
-			rewrite @onDisk /data/hls/{re.hls.1}/{re.hls.2}
-			# Go's mime table may not know these extensions; defer so the
-			# override lands after file_server sets its own Content-Type
-			@m3u8 path_regexp ^/data/hls/.+\.m3u8$
-			header @m3u8 {
-				Content-Type application/vnd.apple.mpegurl
-				defer
-			}
-			@m4s path_regexp ^/data/hls/.+\.m4s$
-			header @m4s {
-				Content-Type video/iso.segment
-				defer
-			}
-			@served path /data/hls/*
-			header @served Cache-Control "public, max-age=31536000, immutable"
-			log_append @served served_by caddy
-			file_server @served
-			reverse_proxy localhost:3051 {
-				header_up Host {host}
-				header_up X-Real-IP {remote_host}
-				header_up X-Forwarded-For {remote_host}
-				header_up X-Forwarded-Proto {scheme}
-			}
-		}
-	}
-
-	# 3. Downloaded/uploaded videos live at videos/{id}.mp4 — serve directly
+	# 2. Downloaded/uploaded videos live at videos/{id}.mp4 — serve directly
 	#    with Caddy's native Range/ETag support. A file that is not on disk yet
 	#    falls through to the app.
 	@stream path_regexp stream ^/videos/([0-9]+)/stream$
@@ -254,7 +214,7 @@
 		}
 	}
 
-	# 4. Everything else → FastAPI
+	# 3. Everything else → FastAPI
 	handle {
 		reverse_proxy localhost:3051 {
 			header_up Host {host}
