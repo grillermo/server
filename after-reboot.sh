@@ -43,6 +43,7 @@ SERVICES=(
     "cal.diy"
     "my-articles"
     "plannotator-router"
+    "claude-draw"
     "bank-app-parser"
     "claudecodeui"
     "music-upkeep"
