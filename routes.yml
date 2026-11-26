@@ -87,6 +87,7 @@ tunnels:
         caddy: http://localhost:3072
       id.grillermo.com: http://localhost:1411
       devin.grillermo.com: http://localhost:4040
+      draw.chiq.me: http://localhost:19450
   pc:
     id: abd3cbbe-02fc-4abc-ad3e-b938a693953e
     routes:
