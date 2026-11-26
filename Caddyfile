@@ -599,6 +599,7 @@ http://192.168.1.1:5333, # ntfy
 http://192.168.1.1:5001, # my-claude-usage
 http://192.168.1.1:5320, # machines
 http://192.168.1.1:19432, # review (plannotator-router)
+http://192.168.1.1:19450, # draw
 http://192.168.1.1:1411, # id (Pocket ID)
 http://192.168.1.1:9998, # var
 http://192.168.1.1:3080, # daisolar-cotizaciones, whatsapp
